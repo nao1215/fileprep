@@ -3,7 +3,7 @@ module github.com/nao1215/fileprep
 go 1.24.9
 
 require (
-	github.com/klauspost/compress v1.18.0
+	github.com/klauspost/compress v1.18.2
 	github.com/parquet-go/parquet-go v0.26.0
 	github.com/ulikunitz/xz v0.5.12
 	github.com/xuri/excelize/v2 v2.9.0
