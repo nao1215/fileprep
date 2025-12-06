@@ -5,9 +5,9 @@ go 1.24.9
 require (
 	github.com/klauspost/compress v1.18.0
 	github.com/parquet-go/parquet-go v0.26.0
-	github.com/ulikunitz/xz v0.5.12
+	github.com/ulikunitz/xz v0.5.14
 	github.com/xuri/excelize/v2 v2.9.0
-	golang.org/x/text v0.19.0
+	golang.org/x/text v0.31.0
 )
 
 require (
@@ -21,8 +21,8 @@ require (
 	github.com/richardlehane/msoleps v1.0.4 // indirect
 	github.com/xuri/efp v0.0.0-20240408161823-9ad904a10d6d // indirect
 	github.com/xuri/nfp v0.0.0-20240318013403-ab9948c2c4a7 // indirect
-	golang.org/x/crypto v0.28.0 // indirect
-	golang.org/x/net v0.30.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
