@@ -1,0 +1,71 @@
+// Package fileprep provides preprocessing and validation for file formats
+// supported by filesql (CSV, TSV, LTSV, Parquet, Excel with gzip, bzip2, xz, zstd support).
+//
+// fileprep complements filesql by providing data preprocessing before loading
+// into SQLite. It uses struct tags for validation ("validate" tag) and
+// preprocessing ("prep" tag).
+//
+// # Basic Usage
+//
+//	type Record struct {
+//	    Name  string `prep:"trim" validate:"required"`
+//	    Email string `prep:"trim,lowercase" validate:"email"`
+//	    Age   int    `validate:"gte=0,lte=150"`
+//	}
+//
+//	file, _ := os.Open("data.csv")
+//	defer file.Close()
+//
+//	var records []Record
+//	processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+//	reader, result, err := processor.Process(file, &records)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// reader can be passed directly to filesql
+//	// result.Errors contains validation errors with row/column information
+//	// result.RowCount and result.ValidRowCount provide processing statistics
+//
+// # Memory Usage
+//
+// fileprep loads the entire file into memory for processing. This enables
+// multi-pass operations (preprocessing then validation) but means memory
+// usage scales with file size. For large files, ensure sufficient memory
+// is available.
+//
+// Format-specific limitations:
+//   - XLSX: Only the first sheet is processed
+//   - LTSV: Maximum line size is 10MB
+//
+// # Supported File Formats
+//
+// fileprep supports the same formats as filesql:
+//   - CSV (.csv)
+//   - TSV (.tsv)
+//   - LTSV (.ltsv)
+//   - Parquet (.parquet)
+//   - Excel (.xlsx)
+//
+// All formats support compression: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst)
+//
+// # Prep Tags
+//
+// The "prep" tag specifies preprocessing operations applied before validation:
+//   - trim: Remove leading and trailing whitespace
+//   - ltrim: Remove leading whitespace
+//   - rtrim: Remove trailing whitespace
+//   - lowercase: Convert to lowercase
+//   - uppercase: Convert to uppercase
+//   - default=value: Set default value if empty
+//
+// # Validate Tags
+//
+// The "validate" tag specifies validation rules (compatible with go-playground/validator):
+//   - required: Field must not be empty
+//   - email: Must be a valid email address
+//   - url: Must be a valid URL
+//   - And many more...
+//
+// See CLAUDE.md for the complete list of supported validators.
+package fileprep
