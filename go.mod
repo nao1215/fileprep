@@ -5,7 +5,7 @@ go 1.24.9
 require (
 	github.com/klauspost/compress v1.18.0
 	github.com/parquet-go/parquet-go v0.26.0
-	github.com/ulikunitz/xz v0.5.12
+	github.com/ulikunitz/xz v0.5.15
 	github.com/xuri/excelize/v2 v2.9.0
 	golang.org/x/text v0.19.0
 )
