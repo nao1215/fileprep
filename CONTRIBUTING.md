@@ -1,0 +1,258 @@
+# Contributing Guide
+
+## Introduction
+
+Thank you for considering contributing to the fileprep project! This document explains how to contribute to the project. We welcome all forms of contributions, including code contributions, documentation improvements, bug reports, and feature suggestions.
+
+## Setting Up Development Environment
+
+### Prerequisites
+
+#### Installing Go
+
+fileprep development requires Go 1.24 or later.
+
+**macOS (using Homebrew)**
+```bash
+brew install go
+```
+
+**Linux (for Ubuntu)**
+```bash
+# Using snap
+sudo snap install go --classic
+
+# Or download from official site
+wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+source ~/.profile
+```
+
+**Windows**
+Download and run the installer from the [official Go website](https://go.dev/dl/).
+
+Verify installation:
+```bash
+go version
+```
+
+### Cloning the Project
+
+```bash
+git clone https://github.com/nao1215/fileprep.git
+cd fileprep
+```
+
+### Installing Development Tools
+
+```bash
+# Install necessary development tools
+make tools
+```
+
+### Verification
+
+To verify that your development environment is set up correctly, run the following commands:
+
+```bash
+# Run tests
+make test
+
+# Run linter
+make lint
+```
+
+## Development Workflow
+
+### Branch Strategy
+
+- `main` branch is the latest stable version
+- Create new branches from `main` for new features or bug fixes
+- Branch naming examples:
+  - `feature/add-json-support` - New feature
+  - `fix/issue-123` - Bug fix
+  - `docs/update-readme` - Documentation update
+
+### Coding Standards
+
+This project follows these standards:
+
+1. **Conform to [Effective Go](https://go.dev/doc/effective_go)**
+2. **Avoid using global variables** (except for config package)
+3. **Always add comments to public functions, variables, and structs**
+4. **Keep functions as small as possible**
+5. **Writing tests is encouraged**
+
+### Writing Tests
+
+Tests are important. Please follow these guidelines:
+
+1. **Unit tests**: Aim for 80% or higher coverage
+2. **Test readability**: Write clear test cases
+3. **Parallel execution**: Use `t.Parallel()` whenever possible
+
+Test example:
+```go
+func TestProcessor_Process(t *testing.T) {
+    t.Parallel()
+
+    t.Run("should preprocess and validate CSV correctly", func(t *testing.T) {
+        t.Parallel()
+
+        type User struct {
+            Name  string `prep:"trim" validate:"required"`
+            Email string `prep:"trim,lowercase"`
+        }
+
+        input := "name,email\n  John  ,JOHN@EXAMPLE.COM"
+        processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+        var users []User
+
+        _, result, err := processor.Process(strings.NewReader(input), &users)
+        if err != nil {
+            t.Fatalf("unexpected error: %v", err)
+        }
+        if result.RowCount != 1 {
+            t.Errorf("RowCount = %d, want 1", result.RowCount)
+        }
+    })
+}
+```
+
+### Adding New Preprocessing Tags
+
+When adding a new `prep` tag:
+
+1. Add the tag constant in `tag.go`
+2. Create a new preprocessor struct in `prep.go` implementing the `Preprocessor` interface
+3. Add the tag parsing logic in `parser.go`
+4. Add comprehensive tests in `prep_test.go`
+5. Update the README with the new tag documentation
+
+### Adding New Validation Tags
+
+When adding a new `validate` tag:
+
+1. Add the tag constant in `tag.go`
+2. Create a new validator struct in `validate.go` implementing the `Validator` interface
+3. Add the tag parsing logic in `parser.go`
+4. Add comprehensive tests in `validate_test.go`
+5. Update the README with the new tag documentation
+
+## Using AI Assistants (LLMs)
+
+We actively encourage the use of AI coding assistants to improve productivity and code quality. Tools like Claude Code, GitHub Copilot, and Cursor are welcome for:
+
+- Writing boilerplate code
+- Generating comprehensive test cases
+- Improving documentation
+- Refactoring existing code
+- Finding potential bugs
+- Suggesting performance optimizations
+- Translating documentation
+
+### Guidelines for AI-Assisted Development
+
+1. **Review all generated code**: Always review and understand AI-generated code before committing
+2. **Maintain consistency**: Ensure AI-generated code follows our coding standards in CLAUDE.md
+3. **Test thoroughly**: AI-generated code must pass all tests and linting (`make test` and `make lint`)
+4. **Use project configuration**: We provide `CLAUDE.md`, `.cursorrules` and `.github/copilot-instructions.md` to help AI assistants understand our project standards
+
+## Creating Pull Requests
+
+### Preparation
+
+1. **Check or Create Issues**
+   - Check if there are existing issues
+   - For major changes, we recommend discussing the approach in an issue first
+
+2. **Write Tests**
+   - Always add tests for new features
+   - For bug fixes, create tests that reproduce the bug
+   - AI tools can help generate comprehensive test cases
+
+3. **Quality Check**
+   ```bash
+   # Ensure all tests pass
+   make test
+
+   # Linter check
+   make lint
+
+   # Check coverage (80% or higher)
+   go test -cover ./...
+   ```
+
+### Submitting Pull Request
+
+1. Create a Pull Request from your forked repository to the main repository
+2. PR title should briefly describe the changes
+3. Include the following in PR description:
+   - Purpose and content of changes
+   - Related issue number (if any)
+   - Test method
+   - Reproduction steps for bug fixes
+
+### About CI/CD
+
+GitHub Actions automatically checks the following items:
+
+- **Cross-platform testing**: Test execution on Linux, macOS, and Windows
+- **Linter check**: Static analysis with golangci-lint
+- **Test coverage**: Maintain 80% or higher coverage
+- **Build verification**: Successful builds on each platform
+
+Merging is not possible unless all checks pass.
+
+## Bug Reports
+
+When you find a bug, please create an issue with the following information:
+
+1. **Environment Information**
+   - OS (Linux/macOS/Windows) and version
+   - Go version
+   - fileprep version
+
+2. **Reproduction Steps**
+   - Minimal code example to reproduce the bug
+   - Sample data files (if applicable)
+
+3. **Expected and Actual Behavior**
+
+4. **Error Messages or Stack Traces** (if any)
+
+## Contributing Outside of Coding
+
+The following activities are also greatly welcomed:
+
+### Activities that Boost Motivation
+
+- **Give a GitHub Star**: Show your interest in the project
+- **Promote the Project**: Introduce it in blogs, social media, study groups, etc.
+- **Become a GitHub Sponsor**: Support available at [https://github.com/sponsors/nao1215](https://github.com/sponsors/nao1215)
+
+### Other Ways to Contribute
+
+- **Documentation Improvements**: Fix typos, improve clarity of explanations
+- **Translations**: Translate documentation to new languages
+- **Add Examples**: Provide practical sample code in `example_test.go`
+- **Feature Suggestions**: Share new feature ideas (new prep/validate tags) in issues
+
+## Community
+
+### Code of Conduct
+
+Please refer to [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). We expect all contributors to treat each other with respect.
+
+### Questions and Reports
+
+- **GitHub Issues**: Bug reports and feature suggestions
+
+## License
+
+Contributions to this project are considered to be released under the project's license (MIT License).
+
+---
+
+Thank you again for considering contributing! We sincerely look forward to your participation.
