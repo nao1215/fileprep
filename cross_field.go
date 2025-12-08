@@ -288,3 +288,125 @@ func (v *fieldExcludesValidator) Validate(srcValue, targetValue string) string {
 func (v *fieldExcludesValidator) Name() string {
 	return fieldExcludesTagValue
 }
+
+// =====================================
+// requiredIfValidator - Required if another field equals a specific value
+// =====================================
+
+// requiredIfValidator validates that a field is required when another field has a specific value
+type requiredIfValidator struct {
+	baseCrossFieldValidator
+	expectedValue string
+}
+
+// newRequiredIfValidator creates a new required_if validator
+// targetField is the field name, expectedValue is the value that triggers the requirement
+func newRequiredIfValidator(targetField, expectedValue string) *requiredIfValidator {
+	return &requiredIfValidator{
+		baseCrossFieldValidator: baseCrossFieldValidator{targetField: targetField},
+		expectedValue:           expectedValue,
+	}
+}
+
+// Validate checks if the source value is present when target field equals expected value
+func (v *requiredIfValidator) Validate(srcValue, targetValue string) string {
+	// If target field equals expected value, source field is required
+	if targetValue == v.expectedValue && srcValue == "" {
+		return "value is required when " + v.targetField + " is " + v.expectedValue
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *requiredIfValidator) Name() string {
+	return requiredIfTagValue
+}
+
+// =====================================
+// requiredUnlessValidator - Required unless another field equals a specific value
+// =====================================
+
+// requiredUnlessValidator validates that a field is required unless another field has a specific value
+type requiredUnlessValidator struct {
+	baseCrossFieldValidator
+	exceptValue string
+}
+
+// newRequiredUnlessValidator creates a new required_unless validator
+// targetField is the field name, exceptValue is the value that exempts the requirement
+func newRequiredUnlessValidator(targetField, exceptValue string) *requiredUnlessValidator {
+	return &requiredUnlessValidator{
+		baseCrossFieldValidator: baseCrossFieldValidator{targetField: targetField},
+		exceptValue:             exceptValue,
+	}
+}
+
+// Validate checks if the source value is present unless target field equals except value
+func (v *requiredUnlessValidator) Validate(srcValue, targetValue string) string {
+	// If target field does NOT equal except value, source field is required
+	if targetValue != v.exceptValue && srcValue == "" {
+		return "value is required unless " + v.targetField + " is " + v.exceptValue
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *requiredUnlessValidator) Name() string {
+	return requiredUnlessTagValue
+}
+
+// =====================================
+// requiredWithValidator - Required if another field is present (non-empty)
+// =====================================
+
+// requiredWithValidator validates that a field is required when another field is present
+type requiredWithValidator struct {
+	baseCrossFieldValidator
+}
+
+// newRequiredWithValidator creates a new required_with validator
+func newRequiredWithValidator(targetField string) *requiredWithValidator {
+	return &requiredWithValidator{baseCrossFieldValidator{targetField: targetField}}
+}
+
+// Validate checks if the source value is present when target field is non-empty
+func (v *requiredWithValidator) Validate(srcValue, targetValue string) string {
+	// If target field is present (non-empty), source field is required
+	if targetValue != "" && srcValue == "" {
+		return "value is required when " + v.targetField + " is present"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *requiredWithValidator) Name() string {
+	return requiredWithTagValue
+}
+
+// =====================================
+// requiredWithoutValidator - Required if another field is absent (empty)
+// =====================================
+
+// requiredWithoutValidator validates that a field is required when another field is absent
+type requiredWithoutValidator struct {
+	baseCrossFieldValidator
+}
+
+// newRequiredWithoutValidator creates a new required_without validator
+func newRequiredWithoutValidator(targetField string) *requiredWithoutValidator {
+	return &requiredWithoutValidator{baseCrossFieldValidator{targetField: targetField}}
+}
+
+// Validate checks if the source value is present when target field is empty
+func (v *requiredWithoutValidator) Validate(srcValue, targetValue string) string {
+	// If target field is absent (empty), source field is required
+	if targetValue == "" && srcValue == "" {
+		return "value is required when " + v.targetField + " is absent"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *requiredWithoutValidator) Name() string {
+	return requiredWithoutTagValue
+}

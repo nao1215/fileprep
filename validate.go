@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -18,6 +19,33 @@ const (
 	emailRegexPattern   = `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
 	numberRegexPattern  = `^[-+]?[0-9]+(\.[0-9]+)?$`
 	fileScheme          = "file"
+
+	// E.164 phone number pattern
+	e164RegexPattern = `^\+[1-9]?[0-9]{7,14}$`
+	// Latitude pattern: -90 to 90
+	latitudeRegexPattern = `^[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?)$`
+	// Longitude pattern: -180 to 180
+	longitudeRegexPattern = `^[-+]?(180(\.0+)?|((1[0-7]\d)|([1-9]?\d))(\.\d+)?)$`
+	// UUID version 3 pattern
+	uuid3RegexPattern = `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-3[0-9a-fA-F]{3}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`
+	// UUID version 4 pattern
+	uuid4RegexPattern = `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`
+	// UUID version 5 pattern
+	uuid5RegexPattern = `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-5[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`
+	// ULID pattern (26 characters, Crockford's base32)
+	ulidRegexPattern = `^(?i)[A-HJKMNP-TV-Z0-9]{26}$`
+	// Hexadecimal pattern
+	hexadecimalRegexPattern = `^(0[xX])?[0-9a-fA-F]+$`
+	// Hex color pattern (#RGB, #RGBA, #RRGGBB, #RRGGBBAA)
+	hexColorRegexPattern = `^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`
+	// RGB color pattern
+	rgbRegexPattern = `^rgb\(\s*(?:(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])|(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])%\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])%\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])%)\s*\)$`
+	// RGBA color pattern
+	rgbaRegexPattern = `^rgba\(\s*(?:(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])|(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])%\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])%\s*,\s*(?:0|[1-9]\d?|1\d\d?|2[0-4]\d|25[0-5])%)\s*,\s*(?:(?:0.[1-9]*)|[01])\s*\)$`
+	// HSL color pattern
+	hslRegexPattern = `^hsl\(\s*(?:0|[1-9]\d?|[12]\d\d|3[0-5]\d|360)\s*,\s*(?:(?:0|[1-9]\d?|100)%)\s*,\s*(?:(?:0|[1-9]\d?|100)%)\s*\)$`
+	// HSLA color pattern
+	hslaRegexPattern = `^hsla\(\s*(?:0|[1-9]\d?|[12]\d\d|3[0-5]\d|360)\s*,\s*(?:(?:0|[1-9]\d?|100)%)\s*,\s*(?:(?:0|[1-9]\d?|100)%)\s*,\s*(?:(?:0.[1-9]*)|[01])\s*\)$`
 )
 
 // Common error messages (to avoid goconst warnings)
@@ -39,6 +67,21 @@ var (
 	fqdnLabelRegex            = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 	hostnameRFC952LabelRegex  = regexp.MustCompile(`^[A-Za-z](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 	hostnameRFC1123LabelRegex = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+	// Additional regex patterns for new validators
+	e164Regex        = regexp.MustCompile(e164RegexPattern)
+	latitudeRegex    = regexp.MustCompile(latitudeRegexPattern)
+	longitudeRegex   = regexp.MustCompile(longitudeRegexPattern)
+	uuid3Regex       = regexp.MustCompile(uuid3RegexPattern)
+	uuid4Regex       = regexp.MustCompile(uuid4RegexPattern)
+	uuid5Regex       = regexp.MustCompile(uuid5RegexPattern)
+	ulidRegex        = regexp.MustCompile(ulidRegexPattern)
+	hexadecimalRegex = regexp.MustCompile(hexadecimalRegexPattern)
+	hexColorRegex    = regexp.MustCompile(hexColorRegexPattern)
+	rgbRegex         = regexp.MustCompile(rgbRegexPattern)
+	rgbaRegex        = regexp.MustCompile(rgbaRegexPattern)
+	hslRegex         = regexp.MustCompile(hslRegexPattern)
+	hslaRegex        = regexp.MustCompile(hslaRegexPattern)
 )
 
 // Validator defines the interface for validating values
@@ -1466,4 +1509,384 @@ func (v *notEqualIgnoreCaseValidator) Validate(value string) string {
 // Name returns the validator name
 func (v *notEqualIgnoreCaseValidator) Name() string {
 	return notEqualIgnoreCaseTagValue
+}
+
+// =============================================================================
+// Datetime Validator
+// =============================================================================
+
+// datetimeValidator validates that a value matches the specified datetime layout
+type datetimeValidator struct {
+	layout string
+}
+
+// newDatetimeValidator creates a new datetime validator with the specified layout
+func newDatetimeValidator(layout string) *datetimeValidator {
+	return &datetimeValidator{layout: layout}
+}
+
+// Validate checks if the value matches the datetime layout
+func (v *datetimeValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if err := parseDateTimeImpl(value, v.layout); err != nil {
+		return "value must be a valid datetime in format: " + v.layout
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *datetimeValidator) Name() string {
+	return datetimeTagValue
+}
+
+// parseDateTimeImpl parses a datetime string using the specified layout
+func parseDateTimeImpl(value, layout string) error {
+	_, err := time.Parse(layout, value)
+	return err
+}
+
+// =============================================================================
+// E.164 Phone Number Validator
+// =============================================================================
+
+// e164Validator validates that a value is a valid E.164 phone number
+type e164Validator struct{}
+
+// newE164Validator creates a new E.164 validator
+func newE164Validator() *e164Validator {
+	return &e164Validator{}
+}
+
+// Validate checks if the value is a valid E.164 phone number
+func (v *e164Validator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !e164Regex.MatchString(value) {
+		return "value must be a valid E.164 phone number"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *e164Validator) Name() string {
+	return e164TagValue
+}
+
+// =============================================================================
+// Geolocation Validators
+// =============================================================================
+
+// latitudeValidator validates that a value is a valid latitude (-90 to 90)
+type latitudeValidator struct{}
+
+// newLatitudeValidator creates a new latitude validator
+func newLatitudeValidator() *latitudeValidator {
+	return &latitudeValidator{}
+}
+
+// Validate checks if the value is a valid latitude
+func (v *latitudeValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !latitudeRegex.MatchString(value) {
+		return "value must be a valid latitude (-90 to 90)"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *latitudeValidator) Name() string {
+	return latitudeTagValue
+}
+
+// longitudeValidator validates that a value is a valid longitude (-180 to 180)
+type longitudeValidator struct{}
+
+// newLongitudeValidator creates a new longitude validator
+func newLongitudeValidator() *longitudeValidator {
+	return &longitudeValidator{}
+}
+
+// Validate checks if the value is a valid longitude
+func (v *longitudeValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !longitudeRegex.MatchString(value) {
+		return "value must be a valid longitude (-180 to 180)"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *longitudeValidator) Name() string {
+	return longitudeTagValue
+}
+
+// =============================================================================
+// UUID Variant Validators
+// =============================================================================
+
+// uuid3Validator validates that a value is a valid UUID version 3
+type uuid3Validator struct{}
+
+// newUUID3Validator creates a new UUID v3 validator
+func newUUID3Validator() *uuid3Validator {
+	return &uuid3Validator{}
+}
+
+// Validate checks if the value is a valid UUID version 3
+func (v *uuid3Validator) Validate(value string) string {
+	if !uuid3Regex.MatchString(value) {
+		return "value must be a valid UUID version 3"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *uuid3Validator) Name() string {
+	return uuid3TagValue
+}
+
+// uuid4Validator validates that a value is a valid UUID version 4
+type uuid4Validator struct{}
+
+// newUUID4Validator creates a new UUID v4 validator
+func newUUID4Validator() *uuid4Validator {
+	return &uuid4Validator{}
+}
+
+// Validate checks if the value is a valid UUID version 4
+func (v *uuid4Validator) Validate(value string) string {
+	if !uuid4Regex.MatchString(value) {
+		return "value must be a valid UUID version 4"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *uuid4Validator) Name() string {
+	return uuid4TagValue
+}
+
+// uuid5Validator validates that a value is a valid UUID version 5
+type uuid5Validator struct{}
+
+// newUUID5Validator creates a new UUID v5 validator
+func newUUID5Validator() *uuid5Validator {
+	return &uuid5Validator{}
+}
+
+// Validate checks if the value is a valid UUID version 5
+func (v *uuid5Validator) Validate(value string) string {
+	if !uuid5Regex.MatchString(value) {
+		return "value must be a valid UUID version 5"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *uuid5Validator) Name() string {
+	return uuid5TagValue
+}
+
+// ulidValidator validates that a value is a valid ULID
+type ulidValidator struct{}
+
+// newULIDValidator creates a new ULID validator
+func newULIDValidator() *ulidValidator {
+	return &ulidValidator{}
+}
+
+// Validate checks if the value is a valid ULID
+func (v *ulidValidator) Validate(value string) string {
+	if !ulidRegex.MatchString(value) {
+		return "value must be a valid ULID"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *ulidValidator) Name() string {
+	return ulidTagValue
+}
+
+// =============================================================================
+// Hexadecimal and Color Validators
+// =============================================================================
+
+// hexadecimalValidator validates that a value is a valid hexadecimal string
+type hexadecimalValidator struct{}
+
+// newHexadecimalValidator creates a new hexadecimal validator
+func newHexadecimalValidator() *hexadecimalValidator {
+	return &hexadecimalValidator{}
+}
+
+// Validate checks if the value is a valid hexadecimal string
+func (v *hexadecimalValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !hexadecimalRegex.MatchString(value) {
+		return "value must be a valid hexadecimal"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *hexadecimalValidator) Name() string {
+	return hexadecimalTagValue
+}
+
+// hexColorValidator validates that a value is a valid hex color code
+type hexColorValidator struct{}
+
+// newHexColorValidator creates a new hex color validator
+func newHexColorValidator() *hexColorValidator {
+	return &hexColorValidator{}
+}
+
+// Validate checks if the value is a valid hex color code
+func (v *hexColorValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !hexColorRegex.MatchString(value) {
+		return "value must be a valid hex color"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *hexColorValidator) Name() string {
+	return hexColorTagValue
+}
+
+// rgbValidator validates that a value is a valid RGB color
+type rgbValidator struct{}
+
+// newRGBValidator creates a new RGB color validator
+func newRGBValidator() *rgbValidator {
+	return &rgbValidator{}
+}
+
+// Validate checks if the value is a valid RGB color
+func (v *rgbValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !rgbRegex.MatchString(value) {
+		return "value must be a valid RGB color"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *rgbValidator) Name() string {
+	return rgbTagValue
+}
+
+// rgbaValidator validates that a value is a valid RGBA color
+type rgbaValidator struct{}
+
+// newRGBAValidator creates a new RGBA color validator
+func newRGBAValidator() *rgbaValidator {
+	return &rgbaValidator{}
+}
+
+// Validate checks if the value is a valid RGBA color
+func (v *rgbaValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !rgbaRegex.MatchString(value) {
+		return "value must be a valid RGBA color"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *rgbaValidator) Name() string {
+	return rgbaTagValue
+}
+
+// hslValidator validates that a value is a valid HSL color
+type hslValidator struct{}
+
+// newHSLValidator creates a new HSL color validator
+func newHSLValidator() *hslValidator {
+	return &hslValidator{}
+}
+
+// Validate checks if the value is a valid HSL color
+func (v *hslValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !hslRegex.MatchString(value) {
+		return "value must be a valid HSL color"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *hslValidator) Name() string {
+	return hslTagValue
+}
+
+// hslaValidator validates that a value is a valid HSLA color
+type hslaValidator struct{}
+
+// newHSLAValidator creates a new HSLA color validator
+func newHSLAValidator() *hslaValidator {
+	return &hslaValidator{}
+}
+
+// Validate checks if the value is a valid HSLA color
+func (v *hslaValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if !hslaRegex.MatchString(value) {
+		return "value must be a valid HSLA color"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *hslaValidator) Name() string {
+	return hslaTagValue
+}
+
+// =============================================================================
+// MAC Address Validator
+// =============================================================================
+
+// macValidator validates that a value is a valid MAC address
+type macValidator struct{}
+
+// newMACValidator creates a new MAC address validator
+func newMACValidator() *macValidator {
+	return &macValidator{}
+}
+
+// Validate checks if the value is a valid MAC address
+func (v *macValidator) Validate(value string) string {
+	if value == "" {
+		return ""
+	}
+	if _, err := net.ParseMAC(value); err != nil {
+		return "value must be a valid MAC address"
+	}
+	return ""
+}
+
+// Name returns the validator name
+func (v *macValidator) Name() string {
+	return macTagValue
 }

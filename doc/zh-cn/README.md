@@ -41,6 +41,7 @@ go get github.com/nao1215/fileprep
   - macOS
   - Windows
 
+
 ## 快速开始
 
 ```go
@@ -92,6 +93,237 @@ Jane Smith,jane@example.com,25
 处理完成：2 行中 2 行有效
 姓名："John Doe"，邮箱："john@example.com"
 姓名："Jane Smith"，邮箱："jane@example.com"
+```
+
+## 高级示例
+
+### 复杂数据预处理和验证
+
+此示例展示了 fileprep 的全部功能：组合多个预处理器和验证器来清理和验证真实的"脏"数据。
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/nao1215/fileprep"
+)
+
+// Employee 表示带有综合预处理和验证的员工数据
+type Employee struct {
+    // ID：填充到6位数字，必须是数字
+    EmployeeID string `name:"id" prep:"trim,pad_left=6:0" validate:"required,numeric,len=6"`
+
+    // 姓名：清理空白，必须是字母和空格
+    FullName string `name:"name" prep:"trim,collapse_space" validate:"required,alphaspace"`
+
+    // 邮箱：规范化为小写，验证格式
+    Email string `prep:"trim,lowercase" validate:"required,email"`
+
+    // 部门：规范化大小写，必须是允许的值之一
+    Department string `prep:"trim,uppercase" validate:"required,oneof=ENGINEERING SALES MARKETING HR"`
+
+    // 薪资：只保留数字，验证范围
+    Salary string `prep:"trim,keep_digits" validate:"required,numeric,gte=30000,lte=500000"`
+
+    // 电话：提取数字，添加国家代码后验证 E.164 格式
+    Phone string `prep:"trim,keep_digits,prefix=+1" validate:"e164"`
+
+    // 入职日期：验证日期格式
+    StartDate string `name:"start_date" prep:"trim" validate:"required,datetime=2006-01-02"`
+
+    // 经理 ID：如果部门不是 HR 则必填
+    ManagerID string `name:"manager_id" prep:"trim,pad_left=6:0" validate:"required_unless=Department HR"`
+
+    // 网站：修复缺失的协议，验证 URL
+    Website string `prep:"trim,lowercase,fix_scheme=https" validate:"url"`
+}
+
+func main() {
+    // 真实的"脏" CSV 数据
+    csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
+123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
+99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
+`
+
+    processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+    var employees []Employee
+
+    _, result, err := processor.Process(strings.NewReader(csvData), &employees)
+    if err != nil {
+        fmt.Printf("致命错误：%v\n", err)
+        return
+    }
+
+    fmt.Printf("=== 处理结果 ===\n")
+    fmt.Printf("总行数：%d，有效行数：%d\n\n", result.RowCount, result.ValidRowCount)
+
+    for i, emp := range employees {
+        fmt.Printf("员工 %d：\n", i+1)
+        fmt.Printf("  ID：       %s\n", emp.EmployeeID)
+        fmt.Printf("  姓名：     %s\n", emp.FullName)
+        fmt.Printf("  邮箱：     %s\n", emp.Email)
+        fmt.Printf("  部门：     %s\n", emp.Department)
+        fmt.Printf("  薪资：     %s\n", emp.Salary)
+        fmt.Printf("  电话：     %s\n", emp.Phone)
+        fmt.Printf("  入职日期： %s\n", emp.StartDate)
+        fmt.Printf("  经理 ID：  %s\n", emp.ManagerID)
+        fmt.Printf("  网站：     %s\n\n", emp.Website)
+    }
+}
+```
+
+输出：
+```
+=== 处理结果 ===
+总行数：4，有效行数：4
+
+员工 1：
+  ID：       000042
+  姓名：     John Doe
+  邮箱：     john.doe@company.com
+  部门：     ENGINEERING
+  薪资：     75000
+  电话：     +15551234567
+  入职日期： 2023-01-15
+  经理 ID：  000001
+  网站：     https://company.com/john
+
+员工 2：
+  ID：       000007
+  姓名：     Jane Smith
+  邮箱：     jane@company.com
+  部门：     SALES
+  薪资：     120000
+  电话：     +15559876543
+  入职日期： 2022-06-01
+  经理 ID：  000002
+  网站：     https://www.linkedin.com/in/jane
+
+员工 3：
+  ID：       000123
+  姓名：     Bob Wilson
+  邮箱：     bob.wilson@company.com
+  部门：     HR
+  薪资：     45000
+  电话：     +15551112222
+  入职日期： 2024-03-20
+  经理 ID：  000000
+  网站：
+
+员工 4：
+  ID：       000099
+  姓名：     Alice Brown
+  邮箱：     alice@company.com
+  部门：     MARKETING
+  薪资：     88500
+  电话：     +15554443333
+  入职日期： 2023-09-10
+  经理 ID：  000003
+  网站：     https://alice.dev
+```
+
+
+### 详细错误报告
+
+当验证失败时，fileprep 提供精确的错误信息，包括行号、列名和具体的验证失败原因。
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/nao1215/fileprep"
+)
+
+// Order 表示具有严格验证规则的订单
+type Order struct {
+    OrderID    string `name:"order_id" validate:"required,uuid4"`
+    CustomerID string `name:"customer_id" validate:"required,numeric"`
+    Email      string `validate:"required,email"`
+    Amount     string `validate:"required,number,gt=0,lte=10000"`
+    Currency   string `validate:"required,len=3,uppercase"`
+    Country    string `validate:"required,alpha,len=2"`
+    OrderDate  string `name:"order_date" validate:"required,datetime=2006-01-02"`
+    ShipDate   string `name:"ship_date" validate:"datetime=2006-01-02,gtfield=OrderDate"`
+    IPAddress  string `name:"ip_address" validate:"required,ip_addr"`
+    PromoCode  string `name:"promo_code" validate:"alphanumeric"`
+    Quantity   string `validate:"required,numeric,gte=1,lte=100"`
+    UnitPrice  string `name:"unit_price" validate:"required,number,gt=0"`
+    TotalCheck string `name:"total_check" validate:"required,eqfield=Amount"`
+}
+
+func main() {
+    // 包含多个验证错误的 CSV
+    csvData := `order_id,customer_id,email,amount,currency,country,order_date,ship_date,ip_address,promo_code,quantity,unit_price,total_check
+550e8400-e29b-41d4-a716-446655440000,12345,alice@example.com,500.00,USD,US,2024-01-15,2024-01-20,192.168.1.1,SAVE10,2,250.00,500.00
+invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,PROMO-CODE-TOO-LONG!!,0,0,999
+550e8400-e29b-41d4-a716-446655440001,,bob@test,50000,EURO,J1,not-a-date,,2001:db8::1,VALID20,101,-50,50000
+123e4567-e89b-42d3-a456-426614174000,99999,charlie@company.com,1500.50,JPY,JP,2024-02-28,2024-02-25,10.0.0.1,VIP,5,300.10,1500.50
+`
+
+    processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+    var orders []Order
+
+    _, result, err := processor.Process(strings.NewReader(csvData), &orders)
+    if err != nil {
+        fmt.Printf("致命错误：%v\n", err)
+        return
+    }
+
+    fmt.Printf("=== 验证报告 ===\n")
+    fmt.Printf("总行数：   %d\n", result.RowCount)
+    fmt.Printf("有效行数： %d\n", result.ValidRowCount)
+    fmt.Printf("无效行数： %d\n", result.RowCount-result.ValidRowCount)
+    fmt.Printf("总错误数： %d\n\n", len(result.ValidationErrors()))
+
+    if result.HasErrors() {
+        fmt.Println("=== 错误详情 ===")
+        for _, e := range result.ValidationErrors() {
+            fmt.Printf("第 %d 行，列 '%s'：%s\n", e.Row, e.Column, e.Message)
+        }
+    }
+}
+```
+
+输出：
+```
+=== 验证报告 ===
+总行数：   4
+有效行数： 1
+无效行数： 3
+总错误数： 23
+
+=== 错误详情 ===
+第 2 行，列 'order_id'：value must be a valid UUID version 4
+第 2 行，列 'customer_id'：value must be numeric
+第 2 行，列 'email'：value must be a valid email address
+第 2 行，列 'amount'：value must be greater than 0
+第 2 行，列 'currency'：value must have exactly 3 characters
+第 2 行，列 'country'：value must have exactly 2 characters
+第 2 行，列 'order_date'：value must be a valid datetime in format: 2006-01-02
+第 2 行，列 'ip_address'：value must be a valid IP address
+第 2 行，列 'promo_code'：value must contain only alphanumeric characters
+第 2 行，列 'quantity'：value must be greater than or equal to 1
+第 2 行，列 'unit_price'：value must be greater than 0
+第 2 行，列 'ship_date'：value must be greater than field OrderDate
+第 2 行，列 'total_check'：value must equal field Amount
+第 3 行，列 'customer_id'：value is required
+第 3 行，列 'email'：value must be a valid email address
+第 3 行，列 'amount'：value must be less than or equal to 10000
+第 3 行，列 'currency'：value must have exactly 3 characters
+第 3 行，列 'country'：value must contain only alphabetic characters
+第 3 行，列 'order_date'：value must be a valid datetime in format: 2006-01-02
+第 3 行，列 'quantity'：value must be less than or equal to 100
+第 3 行，列 'unit_price'：value must be greater than 0
+第 3 行，列 'ship_date'：value must be greater than field OrderDate
+第 4 行，列 'ship_date'：value must be greater than field OrderDate
 ```
 
 ## 预处理标签（`prep`）
@@ -159,6 +391,60 @@ Jane Smith,jane@example.com,25
 | `required` | 字段不能为空 | `validate:"required"` |
 | `boolean` | 必须是 true、false、0 或 1 | `validate:"boolean"` |
 
+### 字符类型验证器
+
+| 标签 | 描述 | 示例 |
+|------|------|------|
+| `alpha` | 仅 ASCII 字母 | `validate:"alpha"` |
+| `alphaunicode` | 仅 Unicode 字母 | `validate:"alphaunicode"` |
+| `alphaspace` | 字母或空格 | `validate:"alphaspace"` |
+| `alphanumeric` | ASCII 字母和数字 | `validate:"alphanumeric"` |
+| `alphanumunicode` | Unicode 字母或数字 | `validate:"alphanumunicode"` |
+| `numeric` | 整数 | `validate:"numeric"` |
+| `number` | 数字（整数或小数） | `validate:"number"` |
+| `ascii` | 仅 ASCII 字符 | `validate:"ascii"` |
+| `printascii` | 可打印 ASCII 字符（0x20-0x7E） | `validate:"printascii"` |
+| `multibyte` | 包含多字节字符 | `validate:"multibyte"` |
+
+### 数值比较验证器
+
+| 标签 | 描述 | 示例 |
+|------|------|------|
+| `eq=N` | 值等于 N | `validate:"eq=100"` |
+| `ne=N` | 值不等于 N | `validate:"ne=0"` |
+| `gt=N` | 值大于 N | `validate:"gt=0"` |
+| `gte=N` | 值大于或等于 N | `validate:"gte=1"` |
+| `lt=N` | 值小于 N | `validate:"lt=100"` |
+| `lte=N` | 值小于或等于 N | `validate:"lte=99"` |
+| `min=N` | 值至少为 N | `validate:"min=0"` |
+| `max=N` | 值最多为 N | `validate:"max=100"` |
+| `len=N` | 恰好 N 个字符 | `validate:"len=10"` |
+
+### 字符串验证器
+
+| 标签 | 描述 | 示例 |
+|------|------|------|
+| `oneof=a b c` | 值是允许值之一 | `validate:"oneof=active inactive"` |
+| `lowercase` | 值为小写 | `validate:"lowercase"` |
+| `uppercase` | 值为大写 | `validate:"uppercase"` |
+| `eq_ignore_case=value` | 忽略大小写相等 | `validate:"eq_ignore_case=yes"` |
+| `ne_ignore_case=value` | 忽略大小写不相等 | `validate:"ne_ignore_case=no"` |
+
+### 字符串内容验证器
+
+| 标签 | 描述 | 示例 |
+|------|------|------|
+| `startswith=prefix` | 值以 prefix 开头 | `validate:"startswith=http"` |
+| `startsnotwith=prefix` | 值不以 prefix 开头 | `validate:"startsnotwith=_"` |
+| `endswith=suffix` | 值以 suffix 结尾 | `validate:"endswith=.com"` |
+| `endsnotwith=suffix` | 值不以 suffix 结尾 | `validate:"endsnotwith=.tmp"` |
+| `contains=substr` | 值包含子字符串 | `validate:"contains=@"` |
+| `containsany=chars` | 值包含任一字符 | `validate:"containsany=abc"` |
+| `containsrune=r` | 值包含该字符 | `validate:"containsrune=@"` |
+| `excludes=substr` | 值不包含子字符串 | `validate:"excludes=admin"` |
+| `excludesall=chars` | 值不包含任何这些字符 | `validate:"excludesall=<>"` |
+| `excludesrune=r` | 值不包含该字符 | `validate:"excludesrune=$"` |
+
 ### 格式验证器
 
 | 标签 | 描述 | 示例 |
@@ -166,7 +452,41 @@ Jane Smith,jane@example.com,25
 | `email` | 有效的电子邮件地址 | `validate:"email"` |
 | `uri` | 有效的 URI | `validate:"uri"` |
 | `url` | 有效的 URL | `validate:"url"` |
-| `uuid` | 有效的 UUID | `validate:"uuid"` |
+| `http_url` | 有效的 HTTP 或 HTTPS URL | `validate:"http_url"` |
+| `https_url` | 有效的 HTTPS URL | `validate:"https_url"` |
+| `url_encoded` | URL 编码的字符串 | `validate:"url_encoded"` |
+| `datauri` | 有效的 data URI | `validate:"datauri"` |
+| `datetime=layout` | 符合 Go 格式的有效日期时间 | `validate:"datetime=2006-01-02"` |
+| `uuid` | 有效的 UUID（任意版本） | `validate:"uuid"` |
+| `uuid3` | 有效的 UUID 版本 3 | `validate:"uuid3"` |
+| `uuid4` | 有效的 UUID 版本 4 | `validate:"uuid4"` |
+| `uuid5` | 有效的 UUID 版本 5 | `validate:"uuid5"` |
+| `ulid` | 有效的 ULID | `validate:"ulid"` |
+| `e164` | 有效的 E.164 电话号码 | `validate:"e164"` |
+| `latitude` | 有效的纬度（-90 到 90） | `validate:"latitude"` |
+| `longitude` | 有效的经度（-180 到 180） | `validate:"longitude"` |
+| `hexadecimal` | 有效的十六进制字符串 | `validate:"hexadecimal"` |
+| `hexcolor` | 有效的十六进制颜色代码 | `validate:"hexcolor"` |
+| `rgb` | 有效的 RGB 颜色 | `validate:"rgb"` |
+| `rgba` | 有效的 RGBA 颜色 | `validate:"rgba"` |
+| `hsl` | 有效的 HSL 颜色 | `validate:"hsl"` |
+| `hsla` | 有效的 HSLA 颜色 | `validate:"hsla"` |
+
+### 网络验证器
+
+| 标签 | 描述 | 示例 |
+|------|------|------|
+| `ip_addr` | 有效的 IP 地址（v4 或 v6） | `validate:"ip_addr"` |
+| `ip4_addr` | 有效的 IPv4 地址 | `validate:"ip4_addr"` |
+| `ip6_addr` | 有效的 IPv6 地址 | `validate:"ip6_addr"` |
+| `cidr` | 有效的 CIDR 表示法 | `validate:"cidr"` |
+| `cidrv4` | 有效的 IPv4 CIDR | `validate:"cidrv4"` |
+| `cidrv6` | 有效的 IPv6 CIDR | `validate:"cidrv6"` |
+| `mac` | 有效的 MAC 地址 | `validate:"mac"` |
+| `fqdn` | 有效的完全限定域名 | `validate:"fqdn"` |
+| `hostname` | 有效的主机名（RFC 952） | `validate:"hostname"` |
+| `hostname_rfc1123` | 有效的主机名（RFC 1123） | `validate:"hostname_rfc1123"` |
+| `hostname_port` | 有效的 hostname:port | `validate:"hostname_port"` |
 
 ### 跨字段验证器
 
@@ -175,7 +495,20 @@ Jane Smith,jane@example.com,25
 | `eqfield=Field` | 值等于另一个字段 | `validate:"eqfield=Password"` |
 | `nefield=Field` | 值不等于另一个字段 | `validate:"nefield=OldPassword"` |
 | `gtfield=Field` | 值大于另一个字段 | `validate:"gtfield=MinPrice"` |
+| `gtefield=Field` | 值 >= 另一个字段 | `validate:"gtefield=StartDate"` |
 | `ltfield=Field` | 值小于另一个字段 | `validate:"ltfield=MaxPrice"` |
+| `ltefield=Field` | 值 <= 另一个字段 | `validate:"ltefield=EndDate"` |
+| `fieldcontains=Field` | 值包含另一个字段的值 | `validate:"fieldcontains=Keyword"` |
+| `fieldexcludes=Field` | 值不包含另一个字段的值 | `validate:"fieldexcludes=Forbidden"` |
+
+### 条件必填验证器
+
+| 标签 | 描述 | 示例 |
+|------|------|------|
+| `required_if=Field value` | 如果字段等于值则必填 | `validate:"required_if=Status active"` |
+| `required_unless=Field value` | 除非字段等于值否则必填 | `validate:"required_unless=Type guest"` |
+| `required_with=Field` | 如果字段存在则必填 | `validate:"required_with=Email"` |
+| `required_without=Field` | 如果字段不存在则必填 | `validate:"required_without=Phone"` |
 
 ## 支持的文件格式
 
@@ -187,9 +520,123 @@ Jane Smith,jane@example.com,25
 | Excel | `.xlsx` | `.xlsx.gz`、`.xlsx.bz2`、`.xlsx.xz`、`.xlsx.zst` |
 | Parquet | `.parquet` | `.parquet.gz`、`.parquet.bz2`、`.parquet.xz`、`.parquet.zst` |
 
+**Parquet 压缩说明**：外部压缩（`.parquet.gz` 等）是针对容器文件本身的。Parquet 文件还可能使用内部压缩（Snappy、GZIP、LZ4、ZSTD），这由 parquet-go 库透明处理。
+
 **Excel 文件说明**：只处理**第一个工作表**。多工作表工作簿中的后续工作表将被忽略。
 
-## 内存使用
+## 与 filesql 集成
+
+```go
+// 使用预处理和验证处理文件
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+var records []MyRecord
+
+reader, result, err := processor.Process(file, &records)
+if err != nil {
+    return err
+}
+
+// 检查验证错误
+if result.HasErrors() {
+    for _, e := range result.ValidationErrors() {
+        log.Printf("第 %d 行，列 %s：%s", e.Row, e.Column, e.Message)
+    }
+}
+
+// 使用 Builder 模式将预处理的数据传递给 filesql
+ctx := context.Background()
+builder := filesql.NewBuilder().
+    AddReader(reader, "my_table", filesql.FileTypeCSV)
+
+validatedBuilder, err := builder.Build(ctx)
+if err != nil {
+    return err
+}
+
+db, err := validatedBuilder.Open(ctx)
+if err != nil {
+    return err
+}
+defer db.Close()
+
+// 对预处理的数据执行 SQL 查询
+rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
+```
+
+## 设计考虑
+
+### 基于名称的列绑定
+
+结构体字段**按名称**而非按位置映射到文件列。字段名自动转换为 `snake_case` 以匹配 CSV 列标题：
+
+```go
+// 文件列：user_name、email_address、phone_number（任意顺序）
+type User struct {
+    UserName     string  // → 匹配 "user_name" 列
+    EmailAddress string  // → 匹配 "email_address" 列
+    PhoneNumber  string  // → 匹配 "phone_number" 列
+}
+```
+
+**列顺序无关紧要** — 字段按名称匹配，因此您可以重新排列 CSV 中的列而无需更改结构体。
+
+#### 使用 `name` 标签自定义列名
+
+使用 `name` 标签覆盖自动生成的列名：
+
+```go
+type User struct {
+    UserName string `name:"user"`       // → 匹配 "user" 列（而非 "user_name"）
+    Email    string `name:"mail_addr"`  // → 匹配 "mail_addr" 列（而非 "email"）
+    Age      string                     // → 匹配 "age" 列（自动 snake_case）
+}
+```
+
+#### 缺失列的行为
+
+如果结构体字段对应的 CSV 列不存在，字段值将被视为空字符串。验证仍会运行，因此 `required` 将捕获缺失的列：
+
+```go
+type User struct {
+    Name    string `validate:"required"`  // 如果 "name" 列缺失则报错
+    Country string                        // 如果 "country" 列缺失则为空字符串
+}
+```
+
+#### 大小写敏感性和重复标题
+
+**标题匹配区分大小写且精确匹配。** 结构体字段 `UserName` 映射到 `user_name`，但 `User_Name`、`USER_NAME` 或 `userName` 等标题将**不会**匹配：
+
+```go
+type User struct {
+    UserName string  // ✓ 匹配 "user_name"
+                     // ✗ 不匹配 "User_Name"、"USER_NAME"、"userName"
+}
+```
+
+这适用于所有文件格式：CSV、TSV、LTSV 键和 Parquet/XLSX 列名都必须精确匹配。
+
+**重复的列名：** 如果文件包含重复的标题名（例如 `id,id,name`），将使用**第一次出现**进行绑定：
+
+```csv
+id,id,name
+first,second,John  → struct.ID = "first"（第一个 "id" 列获胜）
+```
+
+#### 格式特定说明
+
+**LTSV、Parquet 和 XLSX** 遵循相同的区分大小写匹配规则。键/列名必须精确匹配：
+
+```go
+type Record struct {
+    UserID string                 // 期望 "user_id" 键/列
+    Email  string `name:"EMAIL"`  // 对于非 snake_case 列使用 name 标签
+}
+```
+
+如果您的 LTSV 键使用连字符（`user-id`）或 Parquet/XLSX 列使用驼峰命名（`userId`），请使用 `name` 标签指定确切的列名。
+
+### 内存使用
 
 fileprep 将**整个文件加载到内存**中进行处理。这允许随机访问和多遍操作，但对大文件有影响：
 
@@ -199,10 +646,39 @@ fileprep 将**整个文件加载到内存**中进行处理。这允许随机访�
 | 100-500 MB | 500 MB - 1.5 GB | 监控内存，考虑分块处理 |
 | > 500 MB | > 1.5 GB | 拆分文件或使用流式替代方案 |
 
-## 相关项目
+对于压缩输入（gzip、bzip2、xz、zstd），内存使用基于**解压后**的大小。
 
-- [nao1215/filesql](https://github.com/nao1215/filesql) - CSV、TSV、LTSV、Parquet、Excel 的 SQL 驱动
-- [nao1215/csv](https://github.com/nao1215/csv) - 带验证的 CSV 读取和简单 DataFrame
+## 性能
+
+处理包含 21 列复杂结构的 CSV 文件的基准测试结果。每个字段使用多个预处理和验证标签：
+
+**使用的预处理标签：** trim、lowercase、uppercase、keep_digits、pad_left、strip_html、strip_newline、collapse_space、truncate、fix_scheme、default
+
+**使用的验证标签：** required、alpha、numeric、email、uuid、ip_addr、url、oneof、min、max、len、printascii、ascii、eqfield
+
+| 记录数 | 时间 | 内存 | 分配次数 |
+|-------:|-----:|-----:|---------:|
+| 100 | 0.6 ms | 0.9 MB | 7,654 |
+| 1,000 | 6.1 ms | 9.6 MB | 74,829 |
+| 10,000 | 69 ms | 101 MB | 746,266 |
+| 50,000 | 344 ms | 498 MB | 3,690,281 |
+
+```bash
+# 快速基准测试（100 和 1,000 条记录）
+make bench
+
+# 完整基准测试（所有大小包括 50,000 条记录）
+make bench-all
+```
+
+*在 AMD Ryzen AI MAX+ 395、Go 1.24、Linux 上测试。结果因硬件而异。*
+
+## 相关或启发项目
+
+- [nao1215/filesql](https://github.com/nao1215/filesql) - CSV、TSV、LTSV、Parquet、Excel 的 SQL 驱动，支持 gzip、bzip2、xz、zstd。
+- [nao1215/csv](https://github.com/nao1215/csv) - 带验证和简单 DataFrame 的 Go CSV 读取库。
+- [go-playground/validator](https://github.com/go-playground/validator) - Go 结构体和字段验证，包括跨字段、跨结构体、Map、Slice 和 Array 验证
+- [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - go-header-csv 是带标题的 CSV 编码器/解码器。
 
 ## 贡献
 
@@ -214,6 +690,8 @@ fileprep 将**整个文件加载到内存**中进行处理。这允许随机访�
 
 - 在 GitHub 上给个星 - 这有助于其他人发现这个项目
 - [成为赞助者](https://github.com/sponsors/nao1215) - 您的支持帮助维护项目并激励持续开发
+
+您的支持，无论是星标、赞助还是代码贡献，都是推动这个项目前进的动力。谢谢！
 
 ## 许可证
 

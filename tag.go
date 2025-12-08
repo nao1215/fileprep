@@ -121,6 +121,58 @@ const (
 	// notEqualIgnoreCaseTagValue is the tag value for case-insensitive not equal validation
 	notEqualIgnoreCaseTagValue = "ne_ignore_case"
 
+	// Conditional required validators
+	// requiredIfTagValue is the tag value for required if another field equals a value
+	requiredIfTagValue = "required_if"
+	// requiredUnlessTagValue is the tag value for required unless another field equals a value
+	requiredUnlessTagValue = "required_unless"
+	// requiredWithTagValue is the tag value for required if another field is present
+	requiredWithTagValue = "required_with"
+	// requiredWithoutTagValue is the tag value for required if another field is not present
+	requiredWithoutTagValue = "required_without"
+
+	// Date/time validator
+	// datetimeTagValue is the tag value for datetime format validation
+	datetimeTagValue = "datetime"
+
+	// Phone number validator
+	// e164TagValue is the tag value for E.164 phone number validation
+	e164TagValue = "e164"
+
+	// Geolocation validators
+	// latitudeTagValue is the tag value for latitude validation
+	latitudeTagValue = "latitude"
+	// longitudeTagValue is the tag value for longitude validation
+	longitudeTagValue = "longitude"
+
+	// UUID variant validators
+	// uuid3TagValue is the tag value for UUID version 3 validation
+	uuid3TagValue = "uuid3"
+	// uuid4TagValue is the tag value for UUID version 4 validation
+	uuid4TagValue = "uuid4"
+	// uuid5TagValue is the tag value for UUID version 5 validation
+	uuid5TagValue = "uuid5"
+	// ulidTagValue is the tag value for ULID validation
+	ulidTagValue = "ulid"
+
+	// Hexadecimal and color validators
+	// hexadecimalTagValue is the tag value for hexadecimal validation
+	hexadecimalTagValue = "hexadecimal"
+	// hexColorTagValue is the tag value for hex color validation
+	hexColorTagValue = "hexcolor"
+	// rgbTagValue is the tag value for RGB color validation
+	rgbTagValue = "rgb"
+	// rgbaTagValue is the tag value for RGBA color validation
+	rgbaTagValue = "rgba"
+	// hslTagValue is the tag value for HSL color validation
+	hslTagValue = "hsl"
+	// hslaTagValue is the tag value for HSLA color validation
+	hslaTagValue = "hsla"
+
+	// Network validators
+	// macTagValue is the tag value for MAC address validation
+	macTagValue = "mac"
+
 	// Cross-field validation tag values
 	// eqFieldTagValue is the tag value for equal to another field validation
 	eqFieldTagValue = "eqfield"

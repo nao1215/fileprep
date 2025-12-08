@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-12-08
+
+### Added
+- **Conditional Required Validators** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): New validators for conditional field requirements
+  - `required_if`: Required if another field equals a specific value
+  - `required_unless`: Required unless another field equals a specific value
+  - `required_with`: Required if another field is present
+  - `required_without`: Required if another field is not present
+- **Date/Time Validator** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): `datetime` validator with custom Go layout format support
+- **Phone Number Validator** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): `e164` validator for E.164 international phone number format
+- **Geolocation Validators** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): `latitude` (-90 to 90) and `longitude` (-180 to 180) validators
+- **UUID Variant Validators** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): `uuid3`, `uuid4`, `uuid5` for specific UUID versions, and `ulid` for ULID format
+- **Hexadecimal and Color Validators** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): `hexadecimal`, `hexcolor`, `rgb`, `rgba`, `hsl`, `hsla` validators
+- **MAC Address Validator** ([9caa374](https://github.com/nao1215/fileprep/commit/9caa374)): `mac` validator for MAC address format
+- **Advanced Examples** ([f771f9b](https://github.com/nao1215/fileprep/commit/f771f9b)): Comprehensive documentation examples
+  - Complex Data Preprocessing and Validation example with real-world messy data
+  - Detailed Error Reporting example demonstrating validation error handling
+- **Benchmark Tests** ([607b868](https://github.com/nao1215/fileprep/commit/607b868)): Comprehensive benchmark suite for performance testing
+
+### Changed
+- **Performance Improvement** (PR [#6](https://github.com/nao1215/fileprep/pull/6), [607b868](https://github.com/nao1215/fileprep/commit/607b868)): ~10% faster processing through optimized preprocessing and validation pipeline
+- **Documentation** ([f771f9b](https://github.com/nao1215/fileprep/commit/f771f9b)): Complete update of all README translations (Japanese, Spanish, French, Korean, Russian, Chinese) to match the English version with full feature documentation
+
 ## [0.1.0] - 2025-12-07
 
 ### Added

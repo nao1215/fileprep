@@ -224,6 +224,21 @@ func parsePadParams(value string) (int, rune) {
 	return length, padChar
 }
 
+// parseRequiredIfParams parses "FieldName value" format for required_if/required_unless
+// Returns field name and expected/except value
+func parseRequiredIfParams(value string) (string, string) {
+	parts := strings.SplitN(value, " ", 2)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	field := parts[0]
+	expectedVal := ""
+	if len(parts) == 2 {
+		expectedVal = parts[1]
+	}
+	return field, expectedVal
+}
+
 // parseValidateTag parses the validate tag string and returns validators and cross-field validators
 func parseValidateTag(tag string) (validators, crossFieldValidators) {
 	if tag == "" {
@@ -424,6 +439,50 @@ func parseValidateTag(tag string) (validators, crossFieldValidators) {
 				vals = append(vals, newNotEqualIgnoreCaseValidator(value))
 			}
 
+		// Datetime validator
+		case datetimeTagValue:
+			if value != "" {
+				vals = append(vals, newDatetimeValidator(value))
+			}
+
+		// Phone number validator
+		case e164TagValue:
+			vals = append(vals, newE164Validator())
+
+		// Geolocation validators
+		case latitudeTagValue:
+			vals = append(vals, newLatitudeValidator())
+		case longitudeTagValue:
+			vals = append(vals, newLongitudeValidator())
+
+		// UUID variant validators
+		case uuid3TagValue:
+			vals = append(vals, newUUID3Validator())
+		case uuid4TagValue:
+			vals = append(vals, newUUID4Validator())
+		case uuid5TagValue:
+			vals = append(vals, newUUID5Validator())
+		case ulidTagValue:
+			vals = append(vals, newULIDValidator())
+
+		// Hexadecimal and color validators
+		case hexadecimalTagValue:
+			vals = append(vals, newHexadecimalValidator())
+		case hexColorTagValue:
+			vals = append(vals, newHexColorValidator())
+		case rgbTagValue:
+			vals = append(vals, newRGBValidator())
+		case rgbaTagValue:
+			vals = append(vals, newRGBAValidator())
+		case hslTagValue:
+			vals = append(vals, newHSLValidator())
+		case hslaTagValue:
+			vals = append(vals, newHSLAValidator())
+
+		// Network validators
+		case macTagValue:
+			vals = append(vals, newMACValidator())
+
 		// Cross-field validators
 		case eqFieldTagValue:
 			if value != "" {
@@ -456,6 +515,34 @@ func parseValidateTag(tag string) (validators, crossFieldValidators) {
 		case fieldExcludesTagValue:
 			if value != "" {
 				crossVals = append(crossVals, newFieldExcludesValidator(value))
+			}
+
+		// Conditional required validators (cross-field)
+		case requiredIfTagValue:
+			// Format: required_if=FieldName value
+			if value != "" {
+				field, expectedVal := parseRequiredIfParams(value)
+				if field != "" {
+					crossVals = append(crossVals, newRequiredIfValidator(field, expectedVal))
+				}
+			}
+		case requiredUnlessTagValue:
+			// Format: required_unless=FieldName value
+			if value != "" {
+				field, exceptVal := parseRequiredIfParams(value)
+				if field != "" {
+					crossVals = append(crossVals, newRequiredUnlessValidator(field, exceptVal))
+				}
+			}
+		case requiredWithTagValue:
+			// Format: required_with=FieldName
+			if value != "" {
+				crossVals = append(crossVals, newRequiredWithValidator(value))
+			}
+		case requiredWithoutTagValue:
+			// Format: required_without=FieldName
+			if value != "" {
+				crossVals = append(crossVals, newRequiredWithoutValidator(value))
 			}
 
 		default:

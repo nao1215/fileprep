@@ -1774,3 +1774,515 @@ func TestValidatorNames(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// New Validators Tests
+// =============================================================================
+
+func TestDatetimeValidator(t *testing.T) {
+	t.Parallel()
+
+	v := newDatetimeValidator("2006-01-02")
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"2023-12-25", false},
+		{"2024-01-01", false},
+		{"", false}, // empty is valid (use required for mandatory)
+		{"25-12-2023", true},
+		{"2023/12/25", true},
+		{"invalid", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "datetime" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "datetime")
+	}
+}
+
+func TestE164Validator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"+12025551234", false},
+		{"+819012345678", false},
+		{"+1234567890123", false},
+		{"", false}, // empty is valid
+		{"12025551234", true},
+		{"+1", true},
+		{"+123456", true},
+		{"invalid", true},
+	}
+
+	v := newE164Validator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "e164" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "e164")
+	}
+}
+
+func TestLatitudeValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"0", false},
+		{"35.6762", false},
+		{"-35.6762", false},
+		{"90", false},
+		{"-90", false},
+		{"90.0", false},
+		{"", false}, // empty is valid
+		{"91", true},
+		{"-91", true},
+		{"invalid", true},
+	}
+
+	v := newLatitudeValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "latitude" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "latitude")
+	}
+}
+
+func TestLongitudeValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"0", false},
+		{"139.6917", false},
+		{"-139.6917", false},
+		{"180", false},
+		{"-180", false},
+		{"180.0", false},
+		{"", false}, // empty is valid
+		{"181", true},
+		{"-181", true},
+		{"invalid", true},
+	}
+
+	v := newLongitudeValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "longitude" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "longitude")
+	}
+}
+
+func TestUUID3Validator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"a3bb189e-8bf9-3888-9912-ace4e6543002", false},
+		{"A3BB189E-8BF9-3888-9912-ACE4E6543002", false},
+		{"550e8400-e29b-41d4-a716-446655440000", true}, // UUID v4
+		{"invalid", true},
+		{"", true},
+	}
+
+	v := newUUID3Validator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "uuid3" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "uuid3")
+	}
+}
+
+func TestUUID4Validator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"550e8400-e29b-41d4-a716-446655440000", false},
+		{"f47ac10b-58cc-4372-a567-0e02b2c3d479", false},
+		{"a3bb189e-8bf9-3888-9912-ace4e6543002", true}, // UUID v3
+		{"invalid", true},
+		{"", true},
+	}
+
+	v := newUUID4Validator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "uuid4" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "uuid4")
+	}
+}
+
+func TestUUID5Validator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"886313e1-3b8a-5372-9b90-0c9aee199e5d", false},
+		{"886313E1-3B8A-5372-9B90-0C9AEE199E5D", false},
+		{"550e8400-e29b-41d4-a716-446655440000", true}, // UUID v4
+		{"invalid", true},
+		{"", true},
+	}
+
+	v := newUUID5Validator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "uuid5" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "uuid5")
+	}
+}
+
+func TestULIDValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAV", false},
+		{"01arZ3NdEKTSV4RRFFQ69G5FAV", false},
+		{"invalid", true},
+		{"01ARZ3NDEKTSV4RRFFQ69G5FA", true}, // too short
+		{"", true},
+	}
+
+	v := newULIDValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "ulid" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "ulid")
+	}
+}
+
+func TestHexadecimalValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"1234567890abcdef", false},
+		{"ABCDEF", false},
+		{"0x1234", false},
+		{"0X1234", false},
+		{"", false}, // empty is valid
+		{"ghij", true},
+		{"0x", true},
+	}
+
+	v := newHexadecimalValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "hexadecimal" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "hexadecimal")
+	}
+}
+
+func TestHexColorValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"#fff", false},
+		{"#FFF", false},
+		{"#ffffff", false},
+		{"#FFFFFF", false},
+		{"#ffff", false},     // RGBA short
+		{"#ffffffff", false}, // RRGGBBAA
+		{"", false},          // empty is valid
+		{"fff", true},
+		{"#ff", true},
+		{"#fffff", true},
+	}
+
+	v := newHexColorValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "hexcolor" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "hexcolor")
+	}
+}
+
+func TestRGBValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"rgb(0, 0, 0)", false},
+		{"rgb(255, 255, 255)", false},
+		{"rgb(100, 100, 100)", false},
+		{"", false}, // empty is valid
+		{"rgb(256, 0, 0)", true},
+		{"rgb(-1, 0, 0)", true},
+		{"invalid", true},
+	}
+
+	v := newRGBValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "rgb" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "rgb")
+	}
+}
+
+func TestRGBAValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"rgba(0, 0, 0, 0)", false},
+		{"rgba(255, 255, 255, 1)", false},
+		{"rgba(100, 100, 100, 0.5)", false},
+		{"", false}, // empty is valid
+		{"rgba(256, 0, 0, 0)", true},
+		{"invalid", true},
+	}
+
+	v := newRGBAValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "rgba" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "rgba")
+	}
+}
+
+func TestHSLValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"hsl(0, 0%, 0%)", false},
+		{"hsl(360, 100%, 100%)", false},
+		{"hsl(180, 50%, 50%)", false},
+		{"", false}, // empty is valid
+		{"hsl(361, 0%, 0%)", true},
+		{"invalid", true},
+	}
+
+	v := newHSLValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "hsl" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "hsl")
+	}
+}
+
+func TestHSLAValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"hsla(0, 0%, 0%, 0)", false},
+		{"hsla(360, 100%, 100%, 1)", false},
+		{"hsla(180, 50%, 50%, 0.5)", false},
+		{"", false}, // empty is valid
+		{"hsla(361, 0%, 0%, 0)", true},
+		{"invalid", true},
+	}
+
+	v := newHSLAValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "hsla" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "hsla")
+	}
+}
+
+func TestMACValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"00:00:00:00:00:00", false},
+		{"FF:FF:FF:FF:FF:FF", false},
+		{"01:23:45:67:89:ab", false},
+		{"01-23-45-67-89-AB", false},
+		{"", false}, // empty is valid
+		{"invalid", true},
+		{"00:00:00:00:00", true},
+	}
+
+	v := newMACValidator()
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			msg := v.Validate(tt.input)
+			hasErr := msg != ""
+			if hasErr != tt.wantErr {
+				t.Errorf("Validate(%q) error = %v, wantErr %v", tt.input, msg, tt.wantErr)
+			}
+		})
+	}
+
+	if v.Name() != "mac" {
+		t.Errorf("Name() = %q, want %q", v.Name(), "mac")
+	}
+}
