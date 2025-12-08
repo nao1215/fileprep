@@ -95,6 +95,237 @@ Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
 
+## Advanced Examples
+
+### Complex Data Preprocessing and Validation
+
+This example demonstrates the full power of fileprep: combining multiple preprocessors and validators to clean and validate real-world messy data.
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/nao1215/fileprep"
+)
+
+// Employee represents employee data with comprehensive preprocessing and validation
+type Employee struct {
+    // ID: pad to 6 digits, must be numeric
+    EmployeeID string `name:"id" prep:"trim,pad_left=6:0" validate:"required,numeric,len=6"`
+
+    // Name: clean whitespace, required alphabetic with spaces
+    FullName string `name:"name" prep:"trim,collapse_space" validate:"required,alphaspace"`
+
+    // Email: normalize to lowercase, validate format
+    Email string `prep:"trim,lowercase" validate:"required,email"`
+
+    // Department: normalize case, must be one of allowed values
+    Department string `prep:"trim,uppercase" validate:"required,oneof=ENGINEERING SALES MARKETING HR"`
+
+    // Salary: keep only digits, validate range
+    Salary string `prep:"trim,keep_digits" validate:"required,numeric,gte=30000,lte=500000"`
+
+    // Phone: extract digits, validate E.164 format after adding country code
+    Phone string `prep:"trim,keep_digits,prefix=+1" validate:"e164"`
+
+    // Start date: validate datetime format
+    StartDate string `name:"start_date" prep:"trim" validate:"required,datetime=2006-01-02"`
+
+    // Manager ID: required only if department is not HR
+    ManagerID string `name:"manager_id" prep:"trim,pad_left=6:0" validate:"required_unless=Department HR"`
+
+    // Website: fix missing scheme, validate URL
+    Website string `prep:"trim,lowercase,fix_scheme=https" validate:"url"`
+}
+
+func main() {
+    // Messy real-world CSV data
+    csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
+123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
+99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
+`
+
+    processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+    var employees []Employee
+
+    _, result, err := processor.Process(strings.NewReader(csvData), &employees)
+    if err != nil {
+        fmt.Printf("Fatal error: %v\n", err)
+        return
+    }
+
+    fmt.Printf("=== Processing Result ===\n")
+    fmt.Printf("Total rows: %d, Valid rows: %d\n\n", result.RowCount, result.ValidRowCount)
+
+    for i, emp := range employees {
+        fmt.Printf("Employee %d:\n", i+1)
+        fmt.Printf("  ID:         %s\n", emp.EmployeeID)
+        fmt.Printf("  Name:       %s\n", emp.FullName)
+        fmt.Printf("  Email:      %s\n", emp.Email)
+        fmt.Printf("  Department: %s\n", emp.Department)
+        fmt.Printf("  Salary:     %s\n", emp.Salary)
+        fmt.Printf("  Phone:      %s\n", emp.Phone)
+        fmt.Printf("  Start Date: %s\n", emp.StartDate)
+        fmt.Printf("  Manager ID: %s\n", emp.ManagerID)
+        fmt.Printf("  Website:    %s\n\n", emp.Website)
+    }
+}
+```
+
+Output:
+```
+=== Processing Result ===
+Total rows: 4, Valid rows: 4
+
+Employee 1:
+  ID:         000042
+  Name:       John Doe
+  Email:      john.doe@company.com
+  Department: ENGINEERING
+  Salary:     75000
+  Phone:      +15551234567
+  Start Date: 2023-01-15
+  Manager ID: 000001
+  Website:    https://company.com/john
+
+Employee 2:
+  ID:         000007
+  Name:       Jane Smith
+  Email:      jane@company.com
+  Department: SALES
+  Salary:     120000
+  Phone:      +15559876543
+  Start Date: 2022-06-01
+  Manager ID: 000002
+  Website:    https://www.linkedin.com/in/jane
+
+Employee 3:
+  ID:         000123
+  Name:       Bob Wilson
+  Email:      bob.wilson@company.com
+  Department: HR
+  Salary:     45000
+  Phone:      +15551112222
+  Start Date: 2024-03-20
+  Manager ID: 000000
+  Website:
+
+Employee 4:
+  ID:         000099
+  Name:       Alice Brown
+  Email:      alice@company.com
+  Department: MARKETING
+  Salary:     88500
+  Phone:      +15554443333
+  Start Date: 2023-09-10
+  Manager ID: 000003
+  Website:    https://alice.dev
+```
+
+
+### Detailed Error Reporting
+
+When validation fails, fileprep provides precise error information including row number, column name, and specific validation failure reason.
+
+```go
+package main
+
+import (
+    "fmt"
+    "strings"
+
+    "github.com/nao1215/fileprep"
+)
+
+// Order represents an order with strict validation rules
+type Order struct {
+    OrderID    string `name:"order_id" validate:"required,uuid4"`
+    CustomerID string `name:"customer_id" validate:"required,numeric"`
+    Email      string `validate:"required,email"`
+    Amount     string `validate:"required,number,gt=0,lte=10000"`
+    Currency   string `validate:"required,len=3,uppercase"`
+    Country    string `validate:"required,alpha,len=2"`
+    OrderDate  string `name:"order_date" validate:"required,datetime=2006-01-02"`
+    ShipDate   string `name:"ship_date" validate:"datetime=2006-01-02,gtfield=OrderDate"`
+    IPAddress  string `name:"ip_address" validate:"required,ip_addr"`
+    PromoCode  string `name:"promo_code" validate:"alphanumeric"`
+    Quantity   string `validate:"required,numeric,gte=1,lte=100"`
+    UnitPrice  string `name:"unit_price" validate:"required,number,gt=0"`
+    TotalCheck string `name:"total_check" validate:"required,eqfield=Amount"`
+}
+
+func main() {
+    // CSV with multiple validation errors
+    csvData := `order_id,customer_id,email,amount,currency,country,order_date,ship_date,ip_address,promo_code,quantity,unit_price,total_check
+550e8400-e29b-41d4-a716-446655440000,12345,alice@example.com,500.00,USD,US,2024-01-15,2024-01-20,192.168.1.1,SAVE10,2,250.00,500.00
+invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,PROMO-CODE-TOO-LONG!!,0,0,999
+550e8400-e29b-41d4-a716-446655440001,,bob@test,50000,EURO,J1,not-a-date,,2001:db8::1,VALID20,101,-50,50000
+123e4567-e89b-42d3-a456-426614174000,99999,charlie@company.com,1500.50,JPY,JP,2024-02-28,2024-02-25,10.0.0.1,VIP,5,300.10,1500.50
+`
+
+    processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+    var orders []Order
+
+    _, result, err := processor.Process(strings.NewReader(csvData), &orders)
+    if err != nil {
+        fmt.Printf("Fatal error: %v\n", err)
+        return
+    }
+
+    fmt.Printf("=== Validation Report ===\n")
+    fmt.Printf("Total rows:     %d\n", result.RowCount)
+    fmt.Printf("Valid rows:     %d\n", result.ValidRowCount)
+    fmt.Printf("Invalid rows:   %d\n", result.RowCount-result.ValidRowCount)
+    fmt.Printf("Total errors:   %d\n\n", len(result.ValidationErrors()))
+
+    if result.HasErrors() {
+        fmt.Println("=== Error Details ===")
+        for _, e := range result.ValidationErrors() {
+            fmt.Printf("Row %d, Column '%s': %s\n", e.Row, e.Column, e.Message)
+        }
+    }
+}
+```
+
+Output:
+```
+=== Validation Report ===
+Total rows:     4
+Valid rows:     1
+Invalid rows:   3
+Total errors:   23
+
+=== Error Details ===
+Row 2, Column 'order_id': value must be a valid UUID version 4
+Row 2, Column 'customer_id': value must be numeric
+Row 2, Column 'email': value must be a valid email address
+Row 2, Column 'amount': value must be greater than 0
+Row 2, Column 'currency': value must have exactly 3 characters
+Row 2, Column 'country': value must have exactly 2 characters
+Row 2, Column 'order_date': value must be a valid datetime in format: 2006-01-02
+Row 2, Column 'ip_address': value must be a valid IP address
+Row 2, Column 'promo_code': value must contain only alphanumeric characters
+Row 2, Column 'quantity': value must be greater than or equal to 1
+Row 2, Column 'unit_price': value must be greater than 0
+Row 2, Column 'ship_date': value must be greater than field OrderDate
+Row 2, Column 'total_check': value must equal field Amount
+Row 3, Column 'customer_id': value is required
+Row 3, Column 'email': value must be a valid email address
+Row 3, Column 'amount': value must be less than or equal to 10000
+Row 3, Column 'currency': value must have exactly 3 characters
+Row 3, Column 'country': value must contain only alphabetic characters
+Row 3, Column 'order_date': value must be a valid datetime in format: 2006-01-02
+Row 3, Column 'quantity': value must be less than or equal to 100
+Row 3, Column 'unit_price': value must be greater than 0
+Row 3, Column 'ship_date': value must be greater than field OrderDate
+Row 4, Column 'ship_date': value must be greater than field OrderDate
+```
+
 ## Preprocessing Tags (`prep`)
 
 Multiple tags can be combined: `prep:"trim,lowercase,default=N/A"`
