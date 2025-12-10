@@ -676,6 +676,7 @@ make bench-all
 ## Related or inspired Projects
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - sql driver for CSV, TSV, LTSV, Parquet, Excel with gzip, bzip2, xz, zstd support.
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - DataFrame API for CSV/TSV/LTSV, Parquet, Excel. 
 - [nao1215/csv](https://github.com/nao1215/csv) - read csv with validation and simple DataFrame in golang.
 - [go-playground/validator](https://github.com/go-playground/validator) - Go Struct and Field validation, including Cross Field, Cross Struct, Map, Slice and Array diving
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - go-header-csv is encoder/decoder csv with a header.
