@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-12-11
+
+### Added
+- **New Compression Formats**: Added support for 4 new compression formats via fileparser v0.2.0
+  - zlib (.z) - Standard DEFLATE compression
+  - snappy (.snappy) - Google's high-speed compression
+  - s2 (.s2) - Improved Snappy extension, faster
+  - lz4 (.lz4) - Extremely fast compression
+- **New FileType Constants**: Added 20 new FileType aliases for new compression format combinations
+  - CSV: `FileTypeCSVZLIB`, `FileTypeCSVSNAPPY`, `FileTypeCSVS2`, `FileTypeCSVLZ4`
+  - TSV: `FileTypeTSVZLIB`, `FileTypeTSVSNAPPY`, `FileTypeTSVS2`, `FileTypeTSVLZ4`
+  - LTSV: `FileTypeLTSVZLIB`, `FileTypeLTSVSNAPPY`, `FileTypeLTSVS2`, `FileTypeLTSVLZ4`
+  - Parquet: `FileTypeParquetZLIB`, `FileTypeParquetSNAPPY`, `FileTypeParquetS2`, `FileTypeParquetLZ4`
+  - Excel: `FileTypeXLSXZLIB`, `FileTypeXLSXSNAPPY`, `FileTypeXLSXS2`, `FileTypeXLSXLZ4`
+- **Integration Tests**: Added comprehensive tests for new compression formats (CSV, TSV, LTSV)
+
+### Changed
+- **Dependency Update**: Updated to fileparser v0.2.0 for new compression format support
+- **Documentation**: Updated all README files (en, ja, es, fr, ko, ru, zh-cn) with new compression formats
+
 ## [0.3.0] - 2025-12-11
 
 ### Changed
