@@ -4,7 +4,7 @@ go 1.24.9
 
 require (
 	github.com/nao1215/fileparser v0.3.1
-	github.com/parquet-go/parquet-go v0.26.3
+	github.com/parquet-go/parquet-go v0.26.4
 	golang.org/x/text v0.32.0
 )
 
