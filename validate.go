@@ -96,15 +96,36 @@ type Validator interface {
 // validators is a slice of Validator
 type validators []Validator
 
-// Validate applies all validators and returns the first error message
-// Returns empty string if all validations pass
+// Validate applies all validators and returns the first error message.
+// If omitempty is present and the value is empty, subsequent validators are skipped.
+// Returns empty string if all validations pass.
 func (vs validators) Validate(value string) (string, string) {
 	for _, v := range vs {
+		if v.Name() == omitemptyTagValue {
+			if value == "" {
+				return "", ""
+			}
+			continue
+		}
 		if msg := v.Validate(value); msg != "" {
 			return v.Name(), msg
 		}
 	}
 	return "", ""
+}
+
+// omitemptyValidator is a sentinel validator that signals empty values should be skipped.
+// It does not perform validation itself; its presence is detected by validators.Validate().
+type omitemptyValidator struct{}
+
+// Validate always returns empty (the omitempty logic is handled by validators.Validate)
+func (v *omitemptyValidator) Validate(_ string) string {
+	return ""
+}
+
+// Name returns the validator name
+func (v *omitemptyValidator) Name() string {
+	return omitemptyTagValue
 }
 
 // =============================================================================
@@ -1316,24 +1337,27 @@ func (v *containsValidator) Name() string {
 	return containsTagValue
 }
 
-// containsAnyValidator validates that a value contains any of the substrings
+// containsAnyValidator validates that a value contains any of the specified characters.
+// This is symmetric with excludesAllValidator and uses strings.ContainsAny for per-character checking.
 type containsAnyValidator struct {
-	substrs []string
+	chars string
 }
 
-// newContainsAnyValidator creates a new containsAny validator
-func newContainsAnyValidator(substrs []string) *containsAnyValidator {
-	return &containsAnyValidator{substrs: substrs}
+// newContainsAnyValidator creates a new containsAny validator.
+// Each character in chars is checked individually (e.g., "abc" checks for 'a', 'b', or 'c').
+func newContainsAnyValidator(chars string) *containsAnyValidator {
+	return &containsAnyValidator{chars: chars}
 }
 
-// Validate checks if the value contains any of the substrings
+// Validate checks if the value contains any of the specified characters
 func (v *containsAnyValidator) Validate(value string) string {
-	for _, s := range v.substrs {
-		if strings.Contains(value, s) {
-			return ""
-		}
+	if value == "" || v.chars == "" {
+		return "value must contain any of: " + v.chars
 	}
-	return "value must contain one of: " + strings.Join(v.substrs, ", ")
+	if strings.ContainsAny(value, v.chars) {
+		return ""
+	}
+	return "value must contain any of: " + v.chars
 }
 
 // Name returns the validator name

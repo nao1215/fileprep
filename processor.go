@@ -15,20 +15,67 @@ import (
 
 // Processor handles preprocessing and validation of file data
 type Processor struct {
-	fileType fileparser.FileType
+	fileType         fileparser.FileType
+	strictTagParsing bool
+	validRowsOnly    bool
+}
+
+// Option configures a Processor.
+type Option func(*Processor)
+
+// WithStrictTagParsing enables strict tag parsing mode.
+// When enabled, invalid tag arguments (e.g., "eq=abc" where a number is expected)
+// return an error during Process() instead of being silently ignored.
+//
+// Example:
+//
+//	processor := fileprep.NewProcessor(fileparser.CSV, fileprep.WithStrictTagParsing())
+func WithStrictTagParsing() Option {
+	return func(p *Processor) {
+		p.strictTagParsing = true
+	}
+}
+
+// WithValidRowsOnly configures the Processor to include only valid rows
+// in the output io.Reader and struct slice. Rows that fail validation are
+// excluded from the output but still counted in ProcessResult.RowCount
+// and reported in ProcessResult.Errors.
+//
+// Example:
+//
+//	processor := fileprep.NewProcessor(fileparser.CSV, fileprep.WithValidRowsOnly())
+//	reader, result, err := processor.Process(input, &records)
+//	// reader contains only rows that passed all validations
+//	// result.RowCount includes all rows, result.ValidRowCount has valid count
+func WithValidRowsOnly() Option {
+	return func(p *Processor) {
+		p.validRowsOnly = true
+	}
 }
 
 // NewProcessor creates a new Processor for the specified file type.
+// Options can be provided to configure behavior such as strict tag parsing
+// and output filtering.
 //
 // Example:
 //
 //	processor := fileprep.NewProcessor(fileparser.CSV)
 //	var records []MyRecord
 //	reader, result, err := processor.Process(input, &records)
-func NewProcessor(fileType fileparser.FileType) *Processor {
-	return &Processor{
+//
+//	// With options:
+//	processor := fileprep.NewProcessor(fileparser.CSV,
+//	    fileprep.WithStrictTagParsing(),
+//	    fileprep.WithValidRowsOnly(),
+//	)
+func NewProcessor(fileType fileparser.FileType, opts ...Option) *Processor {
+	p := &Processor{
 		fileType: fileType,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // Process reads from the input reader, applies preprocessing and validation,
@@ -76,7 +123,7 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 		return nil, nil, err
 	}
 
-	structInfo, err := parseStructType(structType)
+	structInfo, err := parseStructType(structType, p.strictTagParsing)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -137,6 +184,12 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 	// Each JSON element is stored as a raw JSON string in this single column.
 	const jsonDataColumn = "data"
 
+	// When validRowsOnly is enabled, collect only valid records for output
+	var validRecords [][]string
+	if p.validRowsOnly {
+		validRecords = make([][]string, 0, len(records))
+	}
+
 	// Process records in-place to avoid unnecessary allocations
 	for rowIdx := range records {
 		record := records[rowIdx]
@@ -152,138 +205,197 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 		}
 
 		structValue := reflect.New(structType).Elem()
-		rowHasError := false
 
-		// First pass: apply preprocessing and single-field validation
-		for _, fieldInfo := range structInfo.Fields {
-			colIdx := fieldInfo.ColumnIndex
-
-			// Get value: empty string if column not found or out of range
-			value := ""
-			if colIdx >= 0 && colIdx < len(record) {
-				value = record[colIdx]
-			}
-
-			colName := fieldInfo.ColumnName
-
-			// Apply preprocessing and update record in-place
-			processedValue := fieldInfo.Preprocessors.Process(value)
-			if colIdx >= 0 && colIdx < len(record) {
-				record[colIdx] = processedValue
-			}
-
-			// For JSON/JSONL formats, verify the "data" column integrity after preprocessing.
-			// Only the "data" column contains JSON values; other struct fields may map to
-			// non-existent columns and receive default/preprocessed non-JSON values, so
-			// checking all fields would cause false positives.
-			if isJSONFormat && colName == jsonDataColumn {
-				if processedValue != "" && !json.Valid([]byte(processedValue)) {
-					// Prep tags (e.g. truncate, replace) destroyed the JSON structure.
-					// This is a hard error: invalid JSON lines in JSONL output cause
-					// downstream parsers to fail entirely.
-					return nil, nil, fmt.Errorf("row %d, column %q: %w: %s",
-						rowNum, colName, ErrInvalidJSONAfterPrep, truncateForError(processedValue, 100))
-				} else if value != "" && processedValue == "" {
-					// Preprocessing emptied the JSON data (e.g. nullify).
-					// The row will be skipped in JSONL output, so record a PrepError
-					// to keep ValidRowCount consistent with actual output line count.
-					result.Errors = append(result.Errors, newPrepError(
-						rowNum, colName, fieldInfo.Name, "empty_json_data",
-						"JSON data is empty after preprocessing (original: "+truncateForError(value, 100)+")",
-					))
-					rowHasError = true
-				}
-			}
-
-			// Apply validation
-			if tag, msg := fieldInfo.Validators.Validate(processedValue); msg != "" {
-				result.Errors = append(result.Errors, newValidationError(
-					rowNum, colName, fieldInfo.Name, processedValue, tag, msg,
-				))
-				rowHasError = true
-			}
-
-			// Set struct field value (use field index, not column index)
-			if err := setFieldValue(structValue.Field(fieldInfo.Index), processedValue); err != nil {
-				result.Errors = append(result.Errors, newPrepError(
-					rowNum, colName, fieldInfo.Name, "type_conversion",
-					fmt.Sprintf("failed to convert value %q: %v", processedValue, err),
-				))
-				rowHasError = true
-			}
+		// First pass: preprocessing and single-field validation
+		rowHasError, err := p.processRow(record, rowNum, structInfo, structValue, result, isJSONFormat, jsonDataColumn)
+		if err != nil {
+			return nil, nil, err
 		}
 
-		// Second pass: apply cross-field validation
-		for _, fieldInfo := range structInfo.Fields {
-			if len(fieldInfo.CrossFieldValidators) == 0 {
-				continue
-			}
-
-			colIdx := fieldInfo.ColumnIndex
-			if colIdx < 0 || colIdx >= len(record) {
-				continue
-			}
-
-			srcValue := record[colIdx]
-			colName := fieldInfo.ColumnName
-
-			for _, crossValidator := range fieldInfo.CrossFieldValidators {
-				targetFieldName := crossValidator.TargetField()
-				targetColIdx, ok := fieldNameToColIdx[targetFieldName]
-				if !ok || targetColIdx < 0 {
-					result.Errors = append(result.Errors, newValidationError(
-						rowNum, colName, fieldInfo.Name, srcValue,
-						crossValidator.Name(),
-						fmt.Sprintf("target field %s not found", targetFieldName),
-					))
-					rowHasError = true
-					continue
-				}
-
-				if targetColIdx >= len(record) {
-					result.Errors = append(result.Errors, newValidationError(
-						rowNum, colName, fieldInfo.Name, srcValue,
-						crossValidator.Name(),
-						fmt.Sprintf("target field %s index out of range", targetFieldName),
-					))
-					rowHasError = true
-					continue
-				}
-
-				targetValue := record[targetColIdx]
-				if msg := crossValidator.Validate(srcValue, targetValue); msg != "" {
-					result.Errors = append(result.Errors, newValidationError(
-						rowNum, colName, fieldInfo.Name, srcValue,
-						crossValidator.Name(), msg,
-					))
-					rowHasError = true
-				}
-			}
+		// Second pass: cross-field validation
+		if p.applyCrossFieldValidation(record, rowNum, structInfo, fieldNameToColIdx, result) {
+			rowHasError = true
 		}
 
 		if !rowHasError {
 			result.ValidRowCount++
+			if p.validRowsOnly {
+				validRecords = append(validRecords, record)
+			}
+			structSliceValue.Set(reflect.Append(structSliceValue, structValue))
+		} else if !p.validRowsOnly {
+			structSliceValue.Set(reflect.Append(structSliceValue, structValue))
 		}
-
-		structSliceValue.Set(reflect.Append(structSliceValue, structValue))
 	}
 
-	// Generate output for filesql using the modified records slice directly
+	// Build output from the processed records
+	reader, err := p.buildOutput(headers, records, validRecords, isJSONFormat)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return reader, result, nil
+}
+
+// processRow applies preprocessing and single-field validation to one row.
+// It returns true if the row has any errors, and a non-nil error for fatal
+// conditions (e.g., JSON corruption after preprocessing).
+func (p *Processor) processRow(
+	record []string,
+	rowNum int,
+	structInfo *structInfo,
+	structValue reflect.Value,
+	result *ProcessResult,
+	isJSONFormat bool,
+	jsonDataColumn string,
+) (bool, error) {
+	rowHasError := false
+
+	for _, fieldInfo := range structInfo.Fields {
+		colIdx := fieldInfo.ColumnIndex
+
+		// Get value: empty string if column not found or out of range
+		value := ""
+		if colIdx >= 0 && colIdx < len(record) {
+			value = record[colIdx]
+		}
+
+		colName := fieldInfo.ColumnName
+
+		// Apply preprocessing and update record in-place
+		processedValue := fieldInfo.Preprocessors.Process(value)
+		if colIdx >= 0 && colIdx < len(record) {
+			record[colIdx] = processedValue
+		}
+
+		// For JSON/JSONL formats, verify the "data" column integrity after preprocessing.
+		// Only the "data" column contains JSON values; other struct fields may map to
+		// non-existent columns and receive default/preprocessed non-JSON values, so
+		// checking all fields would cause false positives.
+		if isJSONFormat && colName == jsonDataColumn {
+			if processedValue != "" && !json.Valid([]byte(processedValue)) {
+				// Prep tags (e.g. truncate, replace) destroyed the JSON structure.
+				// This is a hard error: invalid JSON lines in JSONL output cause
+				// downstream parsers to fail entirely.
+				return false, fmt.Errorf("row %d, column %q: %w: %s",
+					rowNum, colName, ErrInvalidJSONAfterPrep, truncateForError(processedValue, 100))
+			} else if value != "" && processedValue == "" {
+				// Preprocessing emptied the JSON data (e.g. nullify).
+				// The row will be skipped in JSONL output, so record a PrepError
+				// to keep ValidRowCount consistent with actual output line count.
+				result.Errors = append(result.Errors, newPrepError(
+					rowNum, colName, fieldInfo.Name, "empty_json_data",
+					"JSON data is empty after preprocessing (original: "+truncateForError(value, 100)+")",
+				))
+				rowHasError = true
+			}
+		}
+
+		// Apply validation
+		if tag, msg := fieldInfo.Validators.Validate(processedValue); msg != "" {
+			result.Errors = append(result.Errors, newValidationError(
+				rowNum, colName, fieldInfo.Name, processedValue, tag, msg,
+			))
+			rowHasError = true
+		}
+
+		// Set struct field value (use field index, not column index)
+		if err := setFieldValue(structValue.Field(fieldInfo.Index), processedValue); err != nil {
+			result.Errors = append(result.Errors, newPrepError(
+				rowNum, colName, fieldInfo.Name, "type_conversion",
+				fmt.Sprintf("failed to convert value %q: %v", processedValue, err),
+			))
+			rowHasError = true
+		}
+	}
+
+	return rowHasError, nil
+}
+
+// applyCrossFieldValidation runs cross-field validators for one row.
+// It returns true if any cross-field validation error was found.
+func (p *Processor) applyCrossFieldValidation(
+	record []string,
+	rowNum int,
+	structInfo *structInfo,
+	fieldNameToColIdx map[string]int,
+	result *ProcessResult,
+) bool {
+	hasError := false
+
+	for _, fieldInfo := range structInfo.Fields {
+		if len(fieldInfo.CrossFieldValidators) == 0 {
+			continue
+		}
+
+		colIdx := fieldInfo.ColumnIndex
+		srcValue := ""
+		if colIdx >= 0 && colIdx < len(record) {
+			srcValue = record[colIdx]
+		}
+		colName := fieldInfo.ColumnName
+
+		for _, crossValidator := range fieldInfo.CrossFieldValidators {
+			targetFieldName := crossValidator.TargetField()
+			targetColIdx, ok := fieldNameToColIdx[targetFieldName]
+			if !ok || targetColIdx < 0 {
+				result.Errors = append(result.Errors, newValidationError(
+					rowNum, colName, fieldInfo.Name, srcValue,
+					crossValidator.Name(),
+					fmt.Sprintf("target field %s not found", targetFieldName),
+				))
+				hasError = true
+				continue
+			}
+
+			if targetColIdx >= len(record) {
+				result.Errors = append(result.Errors, newValidationError(
+					rowNum, colName, fieldInfo.Name, srcValue,
+					crossValidator.Name(),
+					fmt.Sprintf("target field %s index out of range", targetFieldName),
+				))
+				hasError = true
+				continue
+			}
+
+			targetValue := record[targetColIdx]
+			if msg := crossValidator.Validate(srcValue, targetValue); msg != "" {
+				result.Errors = append(result.Errors, newValidationError(
+					rowNum, colName, fieldInfo.Name, srcValue,
+					crossValidator.Name(), msg,
+				))
+				hasError = true
+			}
+		}
+	}
+
+	return hasError
+}
+
+// buildOutput generates the output io.Reader from processed records.
+// When validRowsOnly is enabled, validRecords is used instead of all records.
+func (p *Processor) buildOutput(headers []string, records [][]string, validRecords [][]string, isJSONFormat bool) (io.Reader, error) {
+	// Select which records to include in output
+	outputRecords := records
+	if p.validRowsOnly {
+		outputRecords = validRecords
+	}
+
 	// Pre-allocate buffer capacity based on estimated output size to reduce allocations
 	var outputBuf bytes.Buffer
-	estimatedSize := p.estimateOutputSize(headers, records)
+	estimatedSize := p.estimateOutputSize(headers, outputRecords)
 	outputBuf.Grow(estimatedSize)
-	if err := p.writeOutput(&outputBuf, headers, records); err != nil {
-		return nil, nil, fmt.Errorf("failed to write output: %w", err)
+	if err := p.writeOutput(&outputBuf, headers, outputRecords); err != nil {
+		return nil, fmt.Errorf("failed to write output: %w", err)
 	}
 
 	// For JSON/JSONL, an empty output means all rows were empty after preprocessing.
 	// This is a hard error because an empty JSONL stream is unparseable by downstream consumers.
 	if isJSONFormat && outputBuf.Len() == 0 {
-		return nil, nil, ErrEmptyJSONOutput
+		return nil, ErrEmptyJSONOutput
 	}
 
-	return newStream(outputBuf.Bytes(), p.outputFormat(), p.fileType), result, nil
+	return newStream(outputBuf.Bytes(), p.outputFormat(), p.fileType), nil
 }
 
 // outputFormat returns the actual output format for the stream.
@@ -342,7 +454,6 @@ func (p *Processor) writeOutput(w io.Writer, headers []string, records [][]strin
 // writeCSV writes data in CSV format
 func (p *Processor) writeCSV(w io.Writer, headers []string, records [][]string) error {
 	csvWriter := csv.NewWriter(w)
-	defer csvWriter.Flush()
 
 	if err := csvWriter.Write(headers); err != nil {
 		return err
@@ -354,6 +465,7 @@ func (p *Processor) writeCSV(w io.Writer, headers []string, records [][]string) 
 		}
 	}
 
+	csvWriter.Flush()
 	return csvWriter.Error()
 }
 
@@ -361,7 +473,6 @@ func (p *Processor) writeCSV(w io.Writer, headers []string, records [][]string) 
 func (p *Processor) writeTSV(w io.Writer, headers []string, records [][]string) error {
 	csvWriter := csv.NewWriter(w)
 	csvWriter.Comma = '\t'
-	defer csvWriter.Flush()
 
 	if err := csvWriter.Write(headers); err != nil {
 		return err
@@ -373,6 +484,7 @@ func (p *Processor) writeTSV(w io.Writer, headers []string, records [][]string) 
 		}
 	}
 
+	csvWriter.Flush()
 	return csvWriter.Error()
 }
 

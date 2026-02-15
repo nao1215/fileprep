@@ -12,6 +12,9 @@ const (
 
 // Validation tag values
 const (
+	// omitemptyTagValue is the tag value for skipping validation on empty values.
+	// When present, subsequent validators are skipped if the value is empty.
+	omitemptyTagValue = "omitempty"
 	// requiredTagValue is the tag value for required validation
 	requiredTagValue = "required"
 	// booleanTagValue is the tag value for boolean validation

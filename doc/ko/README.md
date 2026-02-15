@@ -23,7 +23,8 @@
 - 압축 지원: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - 이름 기반 컬럼 바인딩: 필드는 자동으로 `snake_case` 컬럼명에 매칭, `name` 태그로 커스터마이즈 가능
 - struct 태그 기반 전처리 (`prep` 태그): trim, lowercase, uppercase, 기본값 등
-- struct 태그 기반 검증 (`validate` 태그): required 등
+- struct 태그 기반 검증 (`validate` 태그): required, omitempty 등
+- 프로세서 옵션: 태그 설정 오류를 감지하는 `WithStrictTagParsing()`, 출력을 필터링하는 `WithValidRowsOnly()`
 - [filesql](https://github.com/nao1215/filesql)과의 원활한 통합: filesql에서 직접 사용할 수 있는 `io.Reader` 반환
 - 상세한 에러 보고: 각 에러의 행과 열 정보
 
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Jane Smith,jane@example.com,25
 Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
+
+## fileprep 사용 전 알아두기
+
+### JSON/JSONL은 단일 "data" 컬럼을 사용합니다
+
+JSON/JSONL 파일은 `"data"`라는 단일 컬럼으로 파싱됩니다. 각 배열 요소(JSON) 또는 각 줄(JSONL)이 원시 JSON 문자열을 포함하는 하나의 행이 됩니다.
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+출력은 항상 컴팩트 JSONL입니다. prep 태그가 JSON 구조를 파괴하면 `Process`는 `ErrInvalidJSONAfterPrep`을 반환합니다. 모든 행이 비어 있게 되면 `ErrEmptyJSONOutput`을 반환합니다.
+
+### 컬럼 매칭은 대소문자를 구분합니다
+
+`UserName`은 자동 snake_case를 통해 `user_name`에 매핑됩니다. `User_Name`, `USER_NAME`, `userName`과 같은 헤더는 매칭되지 **않습니다**. 헤더가 다른 경우 `name` 태그를 사용하세요:
+
+```go
+type Record struct {
+    UserName string                 // "user_name"에만 매칭
+    Email    string `name:"EMAIL"`  // "EMAIL"에 정확히 매칭
+}
+```
+
+### 중복 헤더: 첫 번째 컬럼이 우선합니다
+
+파일에 `id,id,name`이 있으면 첫 번째 `id` 컬럼이 바인딩에 사용됩니다. 두 번째는 무시됩니다.
+
+### 누락된 컬럼은 빈 문자열이 됩니다
+
+struct 필드에 대한 컬럼이 존재하지 않으면 값은 `""`입니다. 파싱 시점에 이를 감지하려면 `validate:"required"`를 추가하세요.
+
+### Excel: 첫 번째 시트만 처리됩니다
+
+여러 시트가 있는 `.xlsx` 파일에서는 첫 번째 시트 이후의 모든 시트가 자동으로 무시됩니다.
 
 ## 고급 예제
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // 지저분한 실제 세계의 CSV 데이터
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | 태그 | 설명 | 예시 |
 |------|------|------|
 | `required` | 필드가 비어있으면 안 됨 | `validate:"required"` |
+| `omitempty` | 값이 비어있으면 후속 검증기를 건너뜀 | `validate:"omitempty,email"` |
 | `boolean` | true, false, 0, 또는 1이어야 함 | `validate:"boolean"` |
 
 ### 문자 타입 검증자
@@ -510,6 +548,27 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | `required_with=Field` | 필드가 존재하면 필수 | `validate:"required_with=Email"` |
 | `required_without=Field` | 필드가 없으면 필수 | `validate:"required_without=Phone"` |
 
+**사용 예시:**
+
+```go
+type User struct {
+    Role    string
+    // Role이 "admin"일 때 Profile은 필수, 다른 역할에서는 선택
+    Profile string `validate:"required_if=Role admin"`
+    // Role이 "guest"가 아닌 한 Bio는 필수
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // Email이 비어있지 않을 때 Name은 필수
+    Name  string `validate:"required_with=Email"`
+    // Email 또는 BackupEmail 중 하나는 반드시 제공해야 함
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## 지원 파일 형식
 
 | 형식 | 확장자 | 압축 형식 |
@@ -536,10 +595,6 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | lz4 | `.lz4` | 초고속 압축 |
 
 **Parquet 압축 참고**: 외부 압축(`.parquet.gz` 등)은 컨테이너 파일 자체의 압축입니다. Parquet 파일은 내부 압축(Snappy, GZIP, LZ4, ZSTD)도 사용할 수 있으며, parquet-go 라이브러리에 의해 투명하게 처리됩니다.
-
-**Excel 파일 참고**: **첫 번째 시트**만 처리됩니다. 여러 시트가 있는 워크북에서는 이후 시트가 무시됩니다.
-
-**JSON/JSONL 파일 참고**: JSON/JSONL 데이터는 원시 JSON 문자열을 포함하는 단일 `"data"` 컬럼에 저장됩니다. JSON 배열의 각 요소 또는 JSONL의 각 줄이 하나의 행이 됩니다. JSON 입력은 컴팩트 JSONL(한 줄에 하나의 JSON 값)로 출력됩니다. 전처리 태그는 원시 JSON 문자열에 대해 작동하며, 그 안의 개별 필드에는 작용하지 않습니다. 전처리가 JSON 구조를 파괴하면 `Process`는 `ErrInvalidJSONAfterPrep`을 반환합니다. 전처리 후 모든 행이 비어 있으면 `Process`는 `ErrEmptyJSONOutput`을 반환합니다.
 
 ## filesql과의 통합
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## 프로세서 옵션
+
+`NewProcessor`는 동작을 사용자 정의하기 위한 함수형 옵션을 받습니다:
+
+### WithStrictTagParsing
+
+기본적으로 잘못된 태그 인수(예: 숫자가 예상되는 곳에서 `eq=abc`)는 무시됩니다. 엄격 모드를 활성화하면 이러한 설정 오류를 감지할 수 있습니다:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// 태그 인수가 잘못된 경우(예: "eq=abc", "truncate=xyz") 오류를 반환합니다
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+기본적으로 출력에는 모든 행(유효 및 무효 모두)이 포함됩니다. `WithValidRowsOnly`를 사용하면 유효한 행만 출력에 포함됩니다:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader에는 모든 검증을 통과한 행만 포함됩니다
+// records에는 유효한 struct만 포함됩니다
+// result.RowCount는 모든 행을 포함하고, result.ValidRowCount는 유효한 행 수입니다
+// result.Errors는 모든 검증 실패를 보고합니다
+```
+
+옵션은 조합할 수 있습니다:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## 설계 고려 사항
 
 ### 이름 기반 컬럼 바인딩
 
-struct 필드는 **이름으로** 파일 컬럼에 매핑되며, 위치가 아닙니다. 필드 이름은 자동으로 `snake_case`로 변환되어 CSV 컬럼 헤더와 매칭됩니다:
-
-```go
-// 파일 컬럼: user_name, email_address, phone_number (어떤 순서든)
-type User struct {
-    UserName     string  // → "user_name" 컬럼에 매칭
-    EmailAddress string  // → "email_address" 컬럼에 매칭
-    PhoneNumber  string  // → "phone_number" 컬럼에 매칭
-}
-```
-
-**컬럼 순서는 중요하지 않습니다** - 필드는 이름으로 매칭되므로 struct를 변경하지 않고도 CSV의 컬럼 순서를 변경할 수 있습니다.
-
-#### `name` 태그를 사용한 사용자 정의 컬럼 이름
-
-`name` 태그를 사용하여 자동 생성된 컬럼 이름을 재정의할 수 있습니다:
+struct 필드는 **이름으로** 파일 컬럼에 매핑되며, 위치가 아닙니다. 필드 이름은 자동으로 `snake_case`로 변환되어 컬럼 헤더와 매칭됩니다. 파일에서 컬럼 순서는 중요하지 않습니다.
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → "user" 컬럼에 매칭 ("user_name"이 아님)
-    Email    string `name:"mail_addr"`  // → "mail_addr" 컬럼에 매칭 ("email"이 아님)
-    Age      string                     // → "age" 컬럼에 매칭 (자동 snake_case)
-}
-```
-
-#### 누락된 컬럼 동작
-
-struct 필드에 대한 CSV 컬럼이 존재하지 않으면 필드 값은 빈 문자열로 처리됩니다. 검증은 여전히 실행되므로 `required`는 누락된 컬럼을 감지할 수 있습니다:
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // "name" 컬럼이 없으면 에러
-    Country string                        // "country" 컬럼이 없으면 빈 문자열
-}
-```
-
-#### 대소문자 구분 및 중복 헤더
-
-**헤더 매칭은 대소문자를 구분하며 정확히 일치해야 합니다.** struct 필드 `UserName`은 `user_name`에 매핑되지만 `User_Name`, `USER_NAME` 또는 `userName`과 같은 헤더는 **매칭되지 않습니다**:
-
-```go
-type User struct {
-    UserName string  // ✓ "user_name"에 매칭
-                     // ✗ "User_Name", "USER_NAME", "userName"에는 매칭되지 않음
-}
-```
-
-이는 모든 파일 형식에 적용됩니다: CSV, TSV, LTSV 키 및 Parquet/XLSX 컬럼 이름은 정확히 일치해야 합니다.
-
-**중복 컬럼 이름:** 파일에 중복 헤더 이름(예: `id,id,name`)이 포함된 경우 **첫 번째 항목**이 바인딩에 사용됩니다:
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first" (첫 번째 "id" 컬럼이 우선)
-```
-
-#### 형식별 참고 사항
-
-**LTSV, Parquet 및 XLSX**는 동일한 대소문자 구분 매칭 규칙을 따릅니다. 키/컬럼 이름은 정확히 일치해야 합니다:
-
-```go
-type Record struct {
-    UserID string                 // "user_id" 키/컬럼 기대
-    Email  string `name:"EMAIL"`  // 비 snake_case 컬럼에는 name 태그 사용
+    UserName string `name:"user"`       // "user" 컬럼에 매칭 ("user_name"이 아님)
+    Email    string `name:"mail_addr"`  // "mail_addr" 컬럼에 매칭 ("email"이 아님)
+    Age      string                     // "age" 컬럼에 매칭 (자동 snake_case)
 }
 ```
 
 LTSV 키가 하이픈(`user-id`)을 사용하거나 Parquet/XLSX 컬럼이 camelCase(`userId`)를 사용하는 경우 `name` 태그를 사용하여 정확한 컬럼 이름을 지정하세요.
+
+대소문자 구분 규칙, 중복 헤더 동작 및 누락된 컬럼 처리에 대해서는 [fileprep 사용 전 알아두기](#fileprep-사용-전-알아두기)를 참조하세요.
 
 ### 메모리 사용량
 
@@ -693,6 +733,7 @@ make bench-all
 ## 관련 또는 영감을 받은 프로젝트
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - CSV, TSV, LTSV, Parquet, Excel용 SQL 드라이버. gzip, bzip2, xz, zstd 지원.
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - CSV/TSV/LTSV, Parquet, Excel을 위한 DataFrame API.
 - [nao1215/csv](https://github.com/nao1215/csv) - 검증 기능이 있는 CSV 읽기 및 간단한 DataFrame in golang.
 - [go-playground/validator](https://github.com/go-playground/validator) - Go Struct 및 Field 검증, Cross Field, Cross Struct, Map, Slice, Array diving 포함.
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - 헤더가 있는 csv의 인코더/디코더.

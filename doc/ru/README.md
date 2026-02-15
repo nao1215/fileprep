@@ -23,7 +23,8 @@
 - Поддержка сжатия: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - Привязка колонок по имени: поля автоматически соответствуют именам колонок в `snake_case`, настраивается через тег `name`
 - Предобработка на основе struct-тегов (`prep`): trim, lowercase, uppercase, значения по умолчанию
-- Валидация на основе struct-тегов (`validate`): required и другие
+- Валидация на основе struct-тегов (`validate`): required, omitempty и другие
+- Опции процессора: `WithStrictTagParsing()` для обнаружения ошибок конфигурации тегов, `WithValidRowsOnly()` для фильтрации вывода
 - Интеграция с [filesql](https://github.com/nao1215/filesql): возвращает `io.Reader` для прямого использования с filesql
 - Детальные отчёты об ошибках: информация о строке и колонке для каждой ошибки
 
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Jane Smith,jane@example.com,25
 Имя: "John Doe", Email: "john@example.com"
 Имя: "Jane Smith", Email: "jane@example.com"
 ```
+
+## Перед использованием fileprep
+
+### JSON/JSONL использует единственную колонку "data"
+
+Файлы JSON/JSONL парсятся в единственную колонку `"data"`. Каждый элемент массива (JSON) или строка (JSONL) становится одной строкой, содержащей необработанную JSON-строку.
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+Вывод всегда в формате компактного JSONL. Если тег prep нарушает структуру JSON, `Process` возвращает `ErrInvalidJSONAfterPrep`. Если все строки становятся пустыми, возвращается `ErrEmptyJSONOutput`.
+
+### Сопоставление колонок чувствительно к регистру
+
+`UserName` сопоставляется с `user_name` через авто snake_case. Заголовки типа `User_Name`, `USER_NAME`, `userName` **не** совпадут. Используйте тег `name`, когда заголовки отличаются:
+
+```go
+type Record struct {
+    UserName string                 // совпадает только с "user_name"
+    Email    string `name:"EMAIL"`  // совпадает точно с "EMAIL"
+}
+```
+
+### Дублирующиеся заголовки: первая колонка выигрывает
+
+Если файл содержит `id,id,name`, первая колонка `id` используется для привязки. Вторая игнорируется.
+
+### Отсутствующие колонки становятся пустыми строками
+
+Если колонка не существует для поля структуры, значение будет `""`. Добавьте `validate:"required"` для обнаружения этого при парсинге.
+
+### Excel: обрабатывается только первый лист
+
+Файлы `.xlsx` с несколькими листами будут молча игнорировать все листы после первого.
 
 ## Расширенные примеры
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // «Грязные» реальные CSV-данные
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | Тег | Описание | Пример |
 |-----|----------|--------|
 | `required` | Поле не должно быть пустым | `validate:"required"` |
+| `omitempty` | Пропустить последующие валидаторы, если значение пустое | `validate:"omitempty,email"` |
 | `boolean` | Должно быть true, false, 0 или 1 | `validate:"boolean"` |
 
 ### Валидаторы типа символов
@@ -510,6 +548,27 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | `required_with=Field` | Обязательно, если поле присутствует | `validate:"required_with=Email"` |
 | `required_without=Field` | Обязательно, если поле отсутствует | `validate:"required_without=Phone"` |
 
+**Примеры:**
+
+```go
+type User struct {
+    Role    string
+    // Profile обязателен, когда Role равен "admin", необязателен для других ролей
+    Profile string `validate:"required_if=Role admin"`
+    // Bio обязателен, если Role не равен "guest"
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // Name обязателен, когда Email не пуст
+    Name  string `validate:"required_with=Email"`
+    // Хотя бы один из Email или BackupEmail должен быть указан
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## Поддерживаемые форматы файлов
 
 | Формат | Расширение | Сжатые форматы |
@@ -536,10 +595,6 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | lz4 | `.lz4` | Сверхбыстрое сжатие |
 
 **Примечание о сжатии Parquet**: Внешнее сжатие (`.parquet.gz` и т.д.) применяется к самому файлу-контейнеру. Файлы Parquet также могут использовать внутреннее сжатие (Snappy, GZIP, LZ4, ZSTD), которое прозрачно обрабатывается библиотекой parquet-go.
-
-**Примечание о файлах Excel**: Обрабатывается только **первый лист**. Последующие листы в многолистовых книгах будут проигнорированы.
-
-**Примечание о файлах JSON/JSONL**: Данные JSON/JSONL хранятся в единственном столбце `"data"`, содержащем необработанные JSON-строки. Каждый элемент JSON-массива или строка JSONL становится одной строкой. JSON-вход выводится как компактный JSONL (одно JSON-значение на строку). Теги предобработки работают с необработанной JSON-строкой, а не с отдельными полями внутри неё. Если предобработка разрушает структуру JSON, `Process` возвращает `ErrInvalidJSONAfterPrep`. Если после предобработки все строки становятся пустыми, `Process` возвращает `ErrEmptyJSONOutput`.
 
 ## Интеграция с filesql
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## Опции процессора
+
+`NewProcessor` принимает функциональные опции для настройки поведения:
+
+### WithStrictTagParsing
+
+По умолчанию недопустимые аргументы тегов (например, `eq=abc`, где ожидается число) молча игнорируются. Включите строгий режим для обнаружения таких ошибок конфигурации:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// Возвращает ошибку, если аргумент тега недопустим (например, "eq=abc", "truncate=xyz")
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+По умолчанию вывод включает все строки (как валидные, так и невалидные). Используйте `WithValidRowsOnly` для фильтрации вывода только валидными строками:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader содержит только строки, прошедшие все валидации
+// records содержит только валидные структуры
+// result.RowCount включает все строки; result.ValidRowCount содержит количество валидных
+// result.Errors по-прежнему сообщает обо всех ошибках валидации
+```
+
+Опции можно комбинировать:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## Особенности проектирования
 
 ### Привязка колонок по имени
 
-Поля структуры сопоставляются с колонками файла **по имени**, а не по позиции. Имена полей автоматически преобразуются в `snake_case` для соответствия заголовкам CSV:
-
-```go
-// Колонки файла: user_name, email_address, phone_number (в любом порядке)
-type User struct {
-    UserName     string  // → соответствует колонке "user_name"
-    EmailAddress string  // → соответствует колонке "email_address"
-    PhoneNumber  string  // → соответствует колонке "phone_number"
-}
-```
-
-**Порядок колонок не имеет значения** — поля сопоставляются по имени, поэтому вы можете менять порядок колонок в CSV без изменения структуры.
-
-#### Пользовательские имена колонок с тегом `name`
-
-Используйте тег `name` для переопределения автоматически генерируемого имени колонки:
+Поля структуры сопоставляются с колонками файла **по имени**, а не по позиции. Имена полей автоматически преобразуются в `snake_case` для соответствия заголовкам колонок. Порядок колонок не имеет значения.
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → соответствует колонке "user" (не "user_name")
-    Email    string `name:"mail_addr"`  // → соответствует колонке "mail_addr" (не "email")
-    Age      string                     // → соответствует колонке "age" (авто snake_case)
-}
-```
-
-#### Поведение при отсутствии колонок
-
-Если колонка CSV не существует для поля структуры, значение поля считается пустой строкой. Валидация всё равно выполняется, поэтому `required` обнаружит отсутствующие колонки:
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // Ошибка, если колонка "name" отсутствует
-    Country string                        // Пустая строка, если колонка "country" отсутствует
-}
-```
-
-#### Чувствительность к регистру и дублирующиеся заголовки
-
-**Сопоставление заголовков чувствительно к регистру и точно.** Поле структуры `UserName` сопоставляется с `user_name`, но заголовки типа `User_Name`, `USER_NAME` или `userName` **не** совпадут:
-
-```go
-type User struct {
-    UserName string  // ✓ соответствует "user_name"
-                     // ✗ НЕ соответствует "User_Name", "USER_NAME", "userName"
-}
-```
-
-Это применяется ко всем форматам файлов: CSV, TSV, ключи LTSV и имена колонок Parquet/XLSX должны точно совпадать.
-
-**Дублирующиеся имена колонок:** Если файл содержит дублирующиеся имена заголовков (например, `id,id,name`), используется **первое вхождение** для привязки:
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first" (первая колонка "id" выигрывает)
-```
-
-#### Примечания по форматам
-
-**LTSV, Parquet и XLSX** следуют тем же правилам сопоставления с учётом регистра. Ключи/имена колонок должны точно совпадать:
-
-```go
-type Record struct {
-    UserID string                 // ожидает ключ/колонку "user_id"
-    Email  string `name:"EMAIL"`  // используйте тег name для колонок не в snake_case
+    UserName string `name:"user"`       // соответствует колонке "user" (не "user_name")
+    Email    string `name:"mail_addr"`  // соответствует колонке "mail_addr" (не "email")
+    Age      string                     // соответствует колонке "age" (авто snake_case)
 }
 ```
 
 Если ваши ключи LTSV используют дефисы (`user-id`) или колонки Parquet/XLSX используют camelCase (`userId`), используйте тег `name` для указания точного имени колонки.
+
+Смотрите [Перед использованием fileprep](#перед-использованием-fileprep) для правил чувствительности к регистру, поведения дублирующихся заголовков и обработки отсутствующих колонок.
 
 ### Использование памяти
 
@@ -693,6 +733,7 @@ make bench-all
 ## Связанные и вдохновившие проекты
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - SQL-драйвер для CSV, TSV, LTSV, Parquet, Excel с поддержкой gzip, bzip2, xz, zstd.
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - DataFrame API для CSV/TSV/LTSV, Parquet, Excel.
 - [nao1215/csv](https://github.com/nao1215/csv) - Чтение CSV с валидацией и простой DataFrame на Go.
 - [go-playground/validator](https://github.com/go-playground/validator) - Валидация структур и полей Go, включая кросс-полевую, кросс-структурную, Map, Slice и Array валидацию
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - go-header-csv — кодировщик/декодировщик CSV с заголовком.
