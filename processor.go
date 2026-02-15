@@ -416,6 +416,8 @@ func (p *Processor) writeLTSV(w io.Writer, headers []string, records [][]string)
 func (p *Processor) writeJSONL(w io.Writer, records [][]string) error {
 	var compactBuf bytes.Buffer
 	for _, record := range records {
+		// record[0] is the "data" column: fileparser stores each JSON element
+		// as a single-column row for JSON/JSONL input.
 		if len(record) == 0 || record[0] == "" {
 			continue
 		}
@@ -436,11 +438,13 @@ func (p *Processor) writeJSONL(w io.Writer, records [][]string) error {
 }
 
 // truncateForError truncates a string for inclusion in error messages.
+// It truncates on rune boundaries to avoid splitting multi-byte characters.
 func truncateForError(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
 // setFieldValue sets a struct field value from a string
