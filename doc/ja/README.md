@@ -23,7 +23,8 @@
 - 圧縮対応: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - 名前ベースのカラムバインディング: フィールドは自動的に `snake_case` カラム名にマッチ、`name` タグでカスタマイズ可能
 - structタグベースの前処理 (`prep` タグ): trim、lowercase、uppercase、デフォルト値など
-- structタグベースのバリデーション (`validate` タグ): required など
+- structタグベースのバリデーション (`validate` タグ): required、omitempty など
+- プロセッサオプション: タグ設定ミスを検出する `WithStrictTagParsing()`、出力をフィルタリングする `WithValidRowsOnly()`
 - [filesql](https://github.com/nao1215/filesql) とのシームレスな統合: filesqlで直接使用できる `io.Reader` を返却
 - 詳細なエラーレポート: 各エラーの行と列の情報
 
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Jane Smith,jane@example.com,25
 Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
+
+## fileprep を使用する前に
+
+### JSON/JSONL は単一の "data" カラムを使用します
+
+JSON/JSONL ファイルは `"data"` という名前の単一カラムにパースされます。各配列要素（JSON）または各行（JSONL）が、生のJSON文字列を含む1行になります。
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+出力は常にコンパクトなJSONLです。prep タグがJSON構造を破壊した場合、`Process` は `ErrInvalidJSONAfterPrep` を返します。すべての行が空になった場合は `ErrEmptyJSONOutput` を返します。
+
+### カラムマッチングは大文字小文字を区別します
+
+`UserName` は自動 snake_case 変換により `user_name` にマッピングされます。`User_Name`、`USER_NAME`、`userName` のようなヘッダーは**マッチしません**。ヘッダーが異なる場合は `name` タグを使用してください：
+
+```go
+type Record struct {
+    UserName string                 // "user_name" のみにマッチ
+    Email    string `name:"EMAIL"`  // "EMAIL" に正確にマッチ
+}
+```
+
+### 重複ヘッダー：最初のカラムが優先されます
+
+ファイルに `id,id,name` がある場合、最初の `id` カラムがバインディングに使用されます。2番目は無視されます。
+
+### 欠落カラムは空文字列になります
+
+structフィールドに対応するカラムが存在しない場合、値は `""` になります。パース時にこれを検出するには `validate:"required"` を追加してください。
+
+### Excel：最初のシートのみが処理されます
+
+複数シートの `.xlsx` ファイルでは、最初のシート以降のすべてのシートは暗黙的に無視されます。
 
 ## 高度な使用例
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // 乱雑な現実世界のCSVデータ
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | タグ | 説明 | 例 |
 |-----|------|-----|
 | `required` | フィールドは空であってはならない | `validate:"required"` |
+| `omitempty` | 値が空の場合、後続のバリデーターをスキップ | `validate:"omitempty,email"` |
 | `boolean` | true, false, 0, または 1 である必要がある | `validate:"boolean"` |
 
 ### 文字タイプバリデータ
@@ -510,6 +548,27 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | `required_with=Field` | フィールドが存在する場合は必須 | `validate:"required_with=Email"` |
 | `required_without=Field` | フィールドが存在しない場合は必須 | `validate:"required_without=Phone"` |
 
+**使用例:**
+
+```go
+type User struct {
+    Role    string
+    // Roleが"admin"の場合Profileは必須、他のロールではオプション
+    Profile string `validate:"required_if=Role admin"`
+    // Roleが"guest"でない限りBioは必須
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // Emailが空でない場合Nameは必須
+    Name  string `validate:"required_with=Email"`
+    // EmailまたはBackupEmailのいずれかが提供されている必要がある
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## サポートされているファイル形式
 
 | 形式 | 拡張子 | 圧縮形式 |
@@ -536,10 +595,6 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | lz4 | `.lz4` | github.com/pierrec/lz4/v4 | Pure Go |
 
 **Parquet圧縮についての注意**: 外部圧縮（`.parquet.gz`など）はコンテナファイル自体の圧縮です。Parquetファイルは内部圧縮（Snappy、GZIP、LZ4、ZSTD）も使用でき、parquet-goライブラリによって透過的に処理されます。
-
-**Excelファイルについての注意**: **最初のシート**のみが処理されます。複数シートのワークブックでは、後続のシートは無視されます。
-
-**JSON/JSONLファイルについての注意**: JSON/JSONLデータは生のJSON文字列を含む単一の `"data"` カラムに格納されます。JSON配列の各要素やJSONLの各行が1行になります。JSON入力はコンパクトなJSONL（1行に1つのJSON値）として出力されます。前処理タグは生のJSON文字列に対して動作し、内部の個別フィールドには作用しません。前処理がJSON構造を破壊した場合、`Process` は `ErrInvalidJSONAfterPrep` を返します。前処理後にすべての行が空になった場合、`Process` は `ErrEmptyJSONOutput` を返します。
 
 ## filesqlとの連携
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## プロセッサオプション
+
+`NewProcessor` は動作をカスタマイズするためのファンクショナルオプションを受け付けます：
+
+### WithStrictTagParsing
+
+デフォルトでは、無効なタグ引数（例：数値が期待される場所での `eq=abc`）は無視されます。厳密モードを有効にすると、これらの設定ミスを検出できます：
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// タグ引数が無効な場合（例："eq=abc"、"truncate=xyz"）にエラーを返します
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+デフォルトでは、出力にはすべての行（有効・無効両方）が含まれます。`WithValidRowsOnly` を使用すると、有効な行のみに出力をフィルタリングできます：
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader にはバリデーションに合格した行のみが含まれます
+// records には有効なstructのみが含まれます
+// result.RowCount はすべての行を含み、result.ValidRowCount は有効な行数です
+// result.Errors はすべてのバリデーションエラーを報告します
+```
+
+オプションは組み合わせ可能です：
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## 設計上の考慮事項
 
 ### 名前ベースのカラムバインディング
 
-structフィールドはファイルカラムに**名前で**マッピングされ、位置ではありません。フィールド名は自動的に `snake_case` に変換されてCSVカラムヘッダーにマッチします：
-
-```go
-// ファイルカラム: user_name, email_address, phone_number (任意の順序)
-type User struct {
-    UserName     string  // → "user_name" カラムにマッチ
-    EmailAddress string  // → "email_address" カラムにマッチ
-    PhoneNumber  string  // → "phone_number" カラムにマッチ
-}
-```
-
-**カラムの順序は関係ありません** - フィールドは名前でマッチされるため、structを変更せずにCSVのカラム順序を変更できます。
-
-#### `name` タグによるカスタムカラム名
-
-`name` タグを使用して自動生成されたカラム名を上書きできます：
+structフィールドはファイルカラムに**名前で**マッピングされ、位置ではありません。フィールド名は自動的に `snake_case` に変換されてカラムヘッダーにマッチします。ファイル内のカラム順序は関係ありません。
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → "user" カラムにマッチ ("user_name" ではなく)
-    Email    string `name:"mail_addr"`  // → "mail_addr" カラムにマッチ ("email" ではなく)
-    Age      string                     // → "age" カラムにマッチ (自動snake_case)
-}
-```
-
-#### 欠落カラムの動作
-
-structフィールドに対応するCSVカラムが存在しない場合、フィールド値は空文字列として扱われます。バリデーションは引き続き実行されるため、`required` は欠落カラムを検出できます：
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // "name" カラムがない場合はエラー
-    Country string                        // "country" カラムがない場合は空文字列
-}
-```
-
-#### 大文字小文字の区別と重複ヘッダー
-
-**ヘッダーマッチングは大文字小文字を区別し、完全一致です。** structフィールド `UserName` は `user_name` にマッピングされますが、`User_Name`、`USER_NAME`、または `userName` のようなヘッダーは**マッチしません**：
-
-```go
-type User struct {
-    UserName string  // ✓ "user_name" にマッチ
-                     // ✗ "User_Name", "USER_NAME", "userName" にはマッチしない
-}
-```
-
-これはすべてのファイル形式に適用されます：CSV、TSV、LTSVキー、およびParquet/XLSXカラム名は正確に一致する必要があります。
-
-**重複カラム名:** ファイルに重複するヘッダー名（例：`id,id,name`）が含まれている場合、**最初の出現**がバインディングに使用されます：
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first" (最初の "id" カラムが優先)
-```
-
-#### 形式固有の注意事項
-
-**LTSV、Parquet、およびXLSX** は同じ大文字小文字を区別するマッチングルールに従います。キー/カラム名は正確に一致する必要があります：
-
-```go
-type Record struct {
-    UserID string                 // "user_id" キー/カラムを期待
-    Email  string `name:"EMAIL"`  // 非snake_caseカラムにはnameタグを使用
+    UserName string `name:"user"`       // "user" カラムにマッチ ("user_name" ではなく)
+    Email    string `name:"mail_addr"`  // "mail_addr" カラムにマッチ ("email" ではなく)
+    Age      string                     // "age" カラムにマッチ (自動snake_case)
 }
 ```
 
 LTSVキーがハイフン（`user-id`）を使用している場合や、Parquet/XLSXカラムがcamelCase（`userId`）を使用している場合は、`name` タグを使用して正確なカラム名を指定してください。
+
+詳細は [fileprep を使用する前に](#fileprep-を使用する前に) を参照してください。
 
 ### メモリ使用量
 
@@ -693,6 +733,7 @@ make bench-all
 ## 関連・インスパイアされたプロジェクト
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - CSV、TSV、LTSV、Parquet、Excel用のSQLドライバー。gzip、bzip2、xz、zstdをサポート。
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - CSV/TSV/LTSV、Parquet、ExcelのためのDataFrame API。
 - [nao1215/csv](https://github.com/nao1215/csv) - バリデーション付きCSV読み込みとシンプルなDataFrame。
 - [go-playground/validator](https://github.com/go-playground/validator) - Go Structおよびフィールドバリデーション、クロスフィールド、クロスStruct、Map、Slice、Arrayの探索を含む。
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - ヘッダー付きCSVのエンコーダー/デコーダー。

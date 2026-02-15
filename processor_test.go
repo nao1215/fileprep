@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/nao1215/fileparser"
 	"github.com/parquet-go/parquet-go"
 )
@@ -1021,4 +1022,703 @@ func TestProcessor_JSON_PrettyPrintedGzip(t *testing.T) {
 			t.Errorf("line %d contains tab character: %q", i+1, line)
 		}
 	}
+}
+
+// TestSetFieldValue_IntTypes tests type conversion for int, int8, int16, int32, int64 fields
+// via Process(), comparing results with go-cmp.
+func TestSetFieldValue_IntTypes(t *testing.T) {
+	t.Parallel()
+
+	type IntRecord struct {
+		ValInt   int   `name:"val_int"`
+		ValInt8  int8  `name:"val_int8"`
+		ValInt16 int16 `name:"val_int16"`
+		ValInt32 int32 `name:"val_int32"`
+		ValInt64 int64 `name:"val_int64"`
+	}
+
+	t.Run("valid int values are converted correctly", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_int,val_int8,val_int16,val_int32,val_int64\n42,127,32767,2147483647,9223372036854775807\n-100,-128,-32768,-2147483648,-9223372036854775808\n"
+		var records []IntRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []IntRecord{
+			{ValInt: 42, ValInt8: 127, ValInt16: 32767, ValInt32: 2147483647, ValInt64: 9223372036854775807},
+			{ValInt: -100, ValInt8: -128, ValInt16: -32768, ValInt32: -2147483648, ValInt64: -9223372036854775808},
+		}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+		if result.RowCount != 2 {
+			t.Errorf("RowCount = %d, want 2", result.RowCount)
+		}
+	})
+
+	t.Run("empty int values default to zero", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_int,val_int8,val_int16,val_int32,val_int64\n,,,,\n"
+		var records []IntRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []IntRecord{{}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid int value produces type_conversion error", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_int,val_int8,val_int16,val_int32,val_int64\nnot-a-number,0,0,0,0\n"
+		var records []IntRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatal("expected at least 1 error for invalid int, got 0")
+		}
+		var pe *PrepError
+		if !errors.As(result.Errors[0], &pe) {
+			t.Fatalf("expected PrepError, got %T", result.Errors[0])
+		}
+		if pe.Row != 1 {
+			t.Errorf("Row = %d, want 1", pe.Row)
+		}
+		if pe.Column != "val_int" {
+			t.Errorf("Column = %q, want %q", pe.Column, "val_int")
+		}
+		if pe.Tag != "type_conversion" {
+			t.Errorf("Tag = %q, want %q", pe.Tag, "type_conversion")
+		}
+	})
+
+	t.Run("int8 overflow produces type_conversion error", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_int,val_int8,val_int16,val_int32,val_int64\n0,128,0,0,0\n"
+		var records []IntRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatal("expected at least 1 error for int8 overflow, got 0")
+		}
+		var pe *PrepError
+		if !errors.As(result.Errors[0], &pe) {
+			t.Fatalf("expected PrepError, got %T", result.Errors[0])
+		}
+		if pe.Row != 1 {
+			t.Errorf("Row = %d, want 1", pe.Row)
+		}
+		if pe.Column != "val_int8" {
+			t.Errorf("Column = %q, want %q", pe.Column, "val_int8")
+		}
+		if pe.Tag != "type_conversion" {
+			t.Errorf("Tag = %q, want %q", pe.Tag, "type_conversion")
+		}
+	})
+
+	t.Run("platform-specific int max values are converted correctly", func(t *testing.T) {
+		t.Parallel()
+		// Use math.MaxInt/MinInt which are platform-dependent (32-bit or 64-bit)
+		maxIntStr := strconv.FormatInt(int64(int(^uint(0)>>1)), 10)
+		minIntStr := strconv.FormatInt(int64(-int(^uint(0)>>1)-1), 10)
+		csvData := "val_int,val_int8,val_int16,val_int32,val_int64\n" +
+			maxIntStr + ",0,0,0,0\n" +
+			minIntStr + ",0,0,0,0\n"
+		var records []IntRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors for platform max int, got %d: %v", len(result.Errors), result.Errors)
+		}
+		maxInt := int(^uint(0) >> 1)
+		minInt := -maxInt - 1
+		if records[0].ValInt != maxInt {
+			t.Errorf("ValInt = %d, want %d (platform max)", records[0].ValInt, maxInt)
+		}
+		if records[1].ValInt != minInt {
+			t.Errorf("ValInt = %d, want %d (platform min)", records[1].ValInt, minInt)
+		}
+	})
+}
+
+// TestSetFieldValue_UintPlatformMax tests platform-dependent uint max value conversion
+func TestSetFieldValue_UintPlatformMax(t *testing.T) {
+	t.Parallel()
+
+	type UintRecord struct {
+		ValUint   uint   `name:"val_uint"`
+		ValUint8  uint8  `name:"val_uint8"`
+		ValUint16 uint16 `name:"val_uint16"`
+		ValUint32 uint32 `name:"val_uint32"`
+		ValUint64 uint64 `name:"val_uint64"`
+	}
+
+	t.Run("platform-specific uint max value is converted correctly", func(t *testing.T) {
+		t.Parallel()
+		maxUintStr := strconv.FormatUint(uint64(^uint(0)), 10)
+		csvData := "val_uint,val_uint8,val_uint16,val_uint32,val_uint64\n" +
+			maxUintStr + ",0,0,0,0\n"
+		var records []UintRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors for platform max uint, got %d: %v", len(result.Errors), result.Errors)
+		}
+		maxUint := ^uint(0)
+		if records[0].ValUint != maxUint {
+			t.Errorf("ValUint = %d, want %d (platform max)", records[0].ValUint, maxUint)
+		}
+	})
+}
+
+// TestSetFieldValue_UintTypes tests type conversion for uint, uint8, uint16, uint32, uint64 fields
+// via Process(), comparing results with go-cmp.
+func TestSetFieldValue_UintTypes(t *testing.T) {
+	t.Parallel()
+
+	type UintRecord struct {
+		ValUint   uint   `name:"val_uint"`
+		ValUint8  uint8  `name:"val_uint8"`
+		ValUint16 uint16 `name:"val_uint16"`
+		ValUint32 uint32 `name:"val_uint32"`
+		ValUint64 uint64 `name:"val_uint64"`
+	}
+
+	t.Run("valid uint values are converted correctly", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_uint,val_uint8,val_uint16,val_uint32,val_uint64\n42,255,65535,4294967295,18446744073709551615\n"
+		var records []UintRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []UintRecord{
+			{ValUint: 42, ValUint8: 255, ValUint16: 65535, ValUint32: 4294967295, ValUint64: 18446744073709551615},
+		}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("empty uint values default to zero", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_uint,val_uint8,val_uint16,val_uint32,val_uint64\n,,,,\n"
+		var records []UintRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []UintRecord{{}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("negative value for uint produces type_conversion error", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_uint,val_uint8,val_uint16,val_uint32,val_uint64\n-1,0,0,0,0\n"
+		var records []UintRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatal("expected at least 1 error for negative uint, got 0")
+		}
+		var pe *PrepError
+		if !errors.As(result.Errors[0], &pe) {
+			t.Fatalf("expected PrepError, got %T", result.Errors[0])
+		}
+		if pe.Row != 1 {
+			t.Errorf("Row = %d, want 1", pe.Row)
+		}
+		if pe.Column != "val_uint" {
+			t.Errorf("Column = %q, want %q", pe.Column, "val_uint")
+		}
+		if pe.Tag != "type_conversion" {
+			t.Errorf("Tag = %q, want %q", pe.Tag, "type_conversion")
+		}
+	})
+
+	t.Run("non-numeric value for uint produces type_conversion error", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_uint,val_uint8,val_uint16,val_uint32,val_uint64\nabc,0,0,0,0\n"
+		var records []UintRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatal("expected at least 1 error for non-numeric uint, got 0")
+		}
+		var pe *PrepError
+		if !errors.As(result.Errors[0], &pe) {
+			t.Fatalf("expected PrepError, got %T", result.Errors[0])
+		}
+		if pe.Row != 1 {
+			t.Errorf("Row = %d, want 1", pe.Row)
+		}
+		if pe.Column != "val_uint" {
+			t.Errorf("Column = %q, want %q", pe.Column, "val_uint")
+		}
+		if pe.Tag != "type_conversion" {
+			t.Errorf("Tag = %q, want %q", pe.Tag, "type_conversion")
+		}
+	})
+}
+
+// TestSetFieldValue_FloatTypes tests type conversion for float32 and float64 fields
+// via Process(), comparing results with go-cmp.
+func TestSetFieldValue_FloatTypes(t *testing.T) {
+	t.Parallel()
+
+	type FloatRecord struct {
+		ValFloat32 float32 `name:"val_float32"`
+		ValFloat64 float64 `name:"val_float64"`
+	}
+
+	t.Run("valid float values are converted correctly", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_float32,val_float64\n1.5,3.14\n"
+		var records []FloatRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []FloatRecord{{ValFloat32: 1.5, ValFloat64: 3.14}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("empty float values default to zero", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_float32,val_float64\n,\n"
+		var records []FloatRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []FloatRecord{{}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid float value produces type_conversion error", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_float32,val_float64\nnot-float,0\n"
+		var records []FloatRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatal("expected at least 1 error for invalid float, got 0")
+		}
+		var pe *PrepError
+		if !errors.As(result.Errors[0], &pe) {
+			t.Fatalf("expected PrepError, got %T", result.Errors[0])
+		}
+		if pe.Row != 1 {
+			t.Errorf("Row = %d, want 1", pe.Row)
+		}
+		if pe.Column != "val_float32" {
+			t.Errorf("Column = %q, want %q", pe.Column, "val_float32")
+		}
+		if pe.Tag != "type_conversion" {
+			t.Errorf("Tag = %q, want %q", pe.Tag, "type_conversion")
+		}
+	})
+}
+
+// TestSetFieldValue_BoolType tests type conversion for bool fields
+// via Process(), comparing results with go-cmp.
+func TestSetFieldValue_BoolType(t *testing.T) {
+	t.Parallel()
+
+	type BoolRecord struct {
+		ValBool bool   `name:"val_bool"`
+		Dummy   string `name:"dummy"`
+	}
+
+	t.Run("true/false/1/0 are converted correctly", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_bool,dummy\ntrue,a\nfalse,b\n1,c\n0,d\n"
+		var records []BoolRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []BoolRecord{
+			{ValBool: true, Dummy: "a"},
+			{ValBool: false, Dummy: "b"},
+			{ValBool: true, Dummy: "c"},
+			{ValBool: false, Dummy: "d"},
+		}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("empty bool value defaults to false", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_bool,dummy\n,x\n"
+		var records []BoolRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []BoolRecord{{ValBool: false, Dummy: "x"}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("invalid bool value produces type_conversion error", func(t *testing.T) {
+		t.Parallel()
+		csvData := "val_bool,dummy\nnot-bool,x\n"
+		var records []BoolRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Fatal("expected at least 1 error for invalid bool, got 0")
+		}
+		var pe *PrepError
+		if !errors.As(result.Errors[0], &pe) {
+			t.Fatalf("expected PrepError, got %T", result.Errors[0])
+		}
+		if pe.Row != 1 {
+			t.Errorf("Row = %d, want 1", pe.Row)
+		}
+		if pe.Column != "val_bool" {
+			t.Errorf("Column = %q, want %q", pe.Column, "val_bool")
+		}
+		if pe.Tag != "type_conversion" {
+			t.Errorf("Tag = %q, want %q", pe.Tag, "type_conversion")
+		}
+	})
+}
+
+// TestSetFieldValue_StringType tests string field handling via Process().
+func TestSetFieldValue_StringType(t *testing.T) {
+	t.Parallel()
+
+	type StringRecord struct {
+		Name  string
+		Email string
+	}
+
+	t.Run("string values are set correctly", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\nhello,world@example.com\n"
+		var records []StringRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []StringRecord{{Name: "hello", Email: "world@example.com"}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("empty string values are set as empty", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\n,\n"
+		var records []StringRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, _, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		want := []StringRecord{{Name: "", Email: ""}}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
+// TestSetFieldValue_MixedTypes tests a struct with multiple type fields in one pass.
+func TestSetFieldValue_MixedTypes(t *testing.T) {
+	t.Parallel()
+
+	type MixedRecord struct {
+		Name   string
+		Age    int
+		Score  float64
+		Active bool
+		Level  uint8
+	}
+
+	csvData := "name,age,score,active,level\nAlice,30,95.5,true,5\nBob,,,,\n"
+	var records []MixedRecord
+
+	processor := NewProcessor(FileTypeCSV)
+	_, _, err := processor.Process(strings.NewReader(csvData), &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	want := []MixedRecord{
+		{Name: "Alice", Age: 30, Score: 95.5, Active: true, Level: 5},
+		{Name: "Bob", Age: 0, Score: 0, Active: false, Level: 0},
+	}
+	if diff := cmp.Diff(want, records); diff != "" {
+		t.Errorf("records mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestWithValidRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	type Record struct {
+		Name  string `validate:"required"`
+		Email string `validate:"email"`
+	}
+
+	t.Run("only valid rows in output and struct slice", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\nAlice,alice@example.com\n,invalid\nBob,bob@example.com\n"
+		var records []Record
+		processor := NewProcessor(FileTypeCSV, WithValidRowsOnly())
+		reader, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		// Total rows should be 3, valid rows should be 2
+		if result.RowCount != 3 {
+			t.Errorf("RowCount = %d, want 3", result.RowCount)
+		}
+		if result.ValidRowCount != 2 {
+			t.Errorf("ValidRowCount = %d, want 2", result.ValidRowCount)
+		}
+
+		// Struct slice should contain only 2 valid records
+		if len(records) != 2 {
+			t.Fatalf("len(records) = %d, want 2", len(records))
+		}
+		want := []Record{
+			{Name: "Alice", Email: "alice@example.com"},
+			{Name: "Bob", Email: "bob@example.com"},
+		}
+		if diff := cmp.Diff(want, records); diff != "" {
+			t.Errorf("records mismatch (-want +got):\n%s", diff)
+		}
+
+		// Output should contain only valid rows
+		output, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		outputStr := string(output)
+		if strings.Contains(outputStr, "invalid") {
+			t.Errorf("output should not contain invalid rows, got:\n%s", outputStr)
+		}
+		lines := strings.Split(strings.TrimSpace(outputStr), "\n")
+		// Header + 2 valid rows = 3 lines
+		if len(lines) != 3 {
+			t.Errorf("output lines = %d, want 3 (header + 2 valid rows), got:\n%s", len(lines), outputStr)
+		}
+	})
+
+	t.Run("all rows valid produces same output as default", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\nAlice,alice@example.com\nBob,bob@example.com\n"
+
+		var records1 []Record
+		proc1 := NewProcessor(FileTypeCSV)
+		reader1, result1, err := proc1.Process(strings.NewReader(csvData), &records1)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		out1, err := io.ReadAll(reader1)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+
+		var records2 []Record
+		proc2 := NewProcessor(FileTypeCSV, WithValidRowsOnly())
+		reader2, result2, err := proc2.Process(strings.NewReader(csvData), &records2)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		out2, err := io.ReadAll(reader2)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+
+		if result1.RowCount != result2.RowCount || result1.ValidRowCount != result2.ValidRowCount {
+			t.Errorf("result counts differ: default=%d/%d, validOnly=%d/%d",
+				result1.RowCount, result1.ValidRowCount, result2.RowCount, result2.ValidRowCount)
+		}
+		if string(out1) != string(out2) {
+			t.Errorf("output differs:\ndefault:\n%s\nvalidOnly:\n%s", out1, out2)
+		}
+	})
+
+	t.Run("all rows invalid produces empty output", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\n,invalid1\n,invalid2\n"
+		var records []Record
+		processor := NewProcessor(FileTypeCSV, WithValidRowsOnly())
+		reader, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if result.ValidRowCount != 0 {
+			t.Errorf("ValidRowCount = %d, want 0", result.ValidRowCount)
+		}
+		if len(records) != 0 {
+			t.Errorf("len(records) = %d, want 0", len(records))
+		}
+		output, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		// Only header line should remain
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		if len(lines) != 1 {
+			t.Errorf("output lines = %d, want 1 (header only), got:\n%s", len(lines), output)
+		}
+	})
+}
+
+// errWriter is a writer that always returns an error, used for testing write error paths.
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write error")
+}
+
+func TestWriteCSV_ErrorPath(t *testing.T) {
+	t.Parallel()
+
+	p := NewProcessor(FileTypeCSV)
+
+	t.Run("header write error", func(t *testing.T) {
+		t.Parallel()
+		err := p.writeCSV(errWriter{}, []string{"a", "b"}, [][]string{{"1", "2"}})
+		if err == nil {
+			t.Error("expected error from errWriter, got nil")
+		}
+	})
+}
+
+func TestWriteTSV_ErrorPath(t *testing.T) {
+	t.Parallel()
+
+	p := &Processor{fileType: fileparser.TSV}
+
+	t.Run("header write error", func(t *testing.T) {
+		t.Parallel()
+		err := p.writeTSV(errWriter{}, []string{"a", "b"}, [][]string{{"1", "2"}})
+		if err == nil {
+			t.Error("expected error from errWriter, got nil")
+		}
+	})
+}
+
+func TestWriteLTSV_ErrorPath(t *testing.T) {
+	t.Parallel()
+
+	p := &Processor{fileType: fileparser.LTSV}
+
+	t.Run("write error returns error", func(t *testing.T) {
+		t.Parallel()
+		err := p.writeLTSV(errWriter{}, []string{"key"}, [][]string{{"value"}})
+		if err == nil {
+			t.Error("expected error from errWriter, got nil")
+		}
+	})
+}
+
+func TestWriteJSONL_ErrorPath(t *testing.T) {
+	t.Parallel()
+
+	p := &Processor{fileType: fileparser.JSONL}
+
+	t.Run("write error returns error", func(t *testing.T) {
+		t.Parallel()
+		err := p.writeJSONL(errWriter{}, [][]string{{`{"key":"value"}`}})
+		if err == nil {
+			t.Error("expected error from errWriter, got nil")
+		}
+	})
+
+	t.Run("empty record is skipped", func(t *testing.T) {
+		t.Parallel()
+		var buf bytes.Buffer
+		err := p.writeJSONL(&buf, [][]string{{""}, {}, {`{"a":1}`}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(buf.String(), `{"a":1}`) {
+			t.Errorf("expected valid JSON in output, got: %s", buf.String())
+		}
+		// Empty records should be skipped, so only 1 line
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		if len(lines) != 1 {
+			t.Errorf("expected 1 line (empty records skipped), got %d: %s", len(lines), buf.String())
+		}
+	})
 }

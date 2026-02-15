@@ -24,7 +24,7 @@ type structInfo struct {
 }
 
 // parseStructType parses struct tags from a struct type and returns field information
-func parseStructType(structType reflect.Type) (*structInfo, error) {
+func parseStructType(structType reflect.Type, strict bool) (*structInfo, error) {
 	if structType.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("%w: expected struct, got %s", ErrStructSlicePointer, structType.Kind())
 	}
@@ -55,7 +55,7 @@ func parseStructType(structType reflect.Type) (*structInfo, error) {
 
 		// Parse prep tag
 		if prepTag := field.Tag.Get(prepTagName); prepTag != "" {
-			preps, err := parsePrepTag(prepTag)
+			preps, err := parsePrepTag(prepTag, strict)
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", field.Name, err)
 			}
@@ -64,7 +64,7 @@ func parseStructType(structType reflect.Type) (*structInfo, error) {
 
 		// Parse validate tag
 		if validateTag := field.Tag.Get(validateTagName); validateTag != "" {
-			vals, crossVals, err := parseValidateTag(validateTag)
+			vals, crossVals, err := parseValidateTag(validateTag, strict)
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", field.Name, err)
 			}
@@ -79,7 +79,7 @@ func parseStructType(structType reflect.Type) (*structInfo, error) {
 }
 
 // parsePrepTag parses the prep tag string and returns preprocessors
-func parsePrepTag(tag string) (preprocessors, error) {
+func parsePrepTag(tag string, strict bool) (preprocessors, error) {
 	if tag == "" {
 		return nil, nil
 	}
@@ -117,18 +117,26 @@ func parsePrepTag(tag string) (preprocessors, error) {
 			oldStr, newStr, found := parseColonSeparatedValue(value)
 			if found {
 				preps = append(preps, newReplacePreprocessor(oldStr, newStr))
+			} else if strict {
+				return nil, fmt.Errorf("%w: replace requires old:new format, got %q", ErrInvalidTagFormat, value)
 			}
 		case prefixTagValue:
 			if value != "" {
 				preps = append(preps, newPrefixPreprocessor(value))
+			} else if strict {
+				return nil, fmt.Errorf("%w: prefix requires a value", ErrInvalidTagFormat)
 			}
 		case suffixTagValue:
 			if value != "" {
 				preps = append(preps, newSuffixPreprocessor(value))
+			} else if strict {
+				return nil, fmt.Errorf("%w: suffix requires a value", ErrInvalidTagFormat)
 			}
 		case truncateTagValue:
 			if n, err := strconv.Atoi(value); err == nil && n > 0 {
 				preps = append(preps, newTruncatePreprocessor(n))
+			} else if strict {
+				return nil, fmt.Errorf("%w: truncate requires a positive integer, got %q", ErrInvalidTagFormat, value)
 			}
 		case stripHTMLTagValue:
 			preps = append(preps, newStripHTMLPreprocessor())
@@ -149,6 +157,8 @@ func parsePrepTag(tag string) (preprocessors, error) {
 		case trimSetTagValue:
 			if value != "" {
 				preps = append(preps, newTrimSetPreprocessor(value))
+			} else if strict {
+				return nil, fmt.Errorf("%w: trim_set requires characters to trim", ErrInvalidTagFormat)
 			}
 
 		// Padding preprocessors
@@ -157,12 +167,16 @@ func parsePrepTag(tag string) (preprocessors, error) {
 			length, padChar := parsePadParams(value)
 			if length > 0 {
 				preps = append(preps, newPadLeftPreprocessor(length, padChar))
+			} else if strict {
+				return nil, fmt.Errorf("%w: pad_left requires a positive length, got %q", ErrInvalidTagFormat, value)
 			}
 		case padRightTagValue:
 			// pad_right=N,char format
 			length, padChar := parsePadParams(value)
 			if length > 0 {
 				preps = append(preps, newPadRightPreprocessor(length, padChar))
+			} else if strict {
+				return nil, fmt.Errorf("%w: pad_right requires a positive length, got %q", ErrInvalidTagFormat, value)
 			}
 
 		// Advanced preprocessors
@@ -171,22 +185,33 @@ func parsePrepTag(tag string) (preprocessors, error) {
 		case nullifyTagValue:
 			if value != "" {
 				preps = append(preps, newNullifyPreprocessor(value))
+			} else if strict {
+				return nil, fmt.Errorf("%w: nullify requires a value", ErrInvalidTagFormat)
 			}
 		case coerceTagValue:
 			if value == "int" || value == "float" || value == "bool" {
 				preps = append(preps, newCoercePreprocessor(value))
+			} else if strict {
+				return nil, fmt.Errorf("%w: coerce requires int, float, or bool, got %q", ErrInvalidTagFormat, value)
 			}
 		case fixSchemeTagValue:
 			if value != "" {
 				preps = append(preps, newFixSchemePreprocessor(value))
+			} else if strict {
+				return nil, fmt.Errorf("%w: fix_scheme requires a scheme value", ErrInvalidTagFormat)
 			}
 		case regexReplaceTagValue:
 			// regex_replace=pattern:replacement format
 			pattern, replacement, found := parseColonSeparatedValue(value)
 			if found {
-				if p := newRegexReplacePreprocessor(pattern, replacement); p != nil {
-					preps = append(preps, p)
+				rp := newRegexReplacePreprocessor(pattern, replacement)
+				if rp != nil {
+					preps = append(preps, rp)
+				} else if strict {
+					return nil, fmt.Errorf("%w: regex_replace has invalid pattern %q", ErrInvalidTagFormat, pattern)
 				}
+			} else if strict {
+				return nil, fmt.Errorf("%w: regex_replace requires pattern:replacement format, got %q", ErrInvalidTagFormat, value)
 			}
 
 		default:
@@ -244,9 +269,252 @@ func parseRequiredIfParams(value string) (string, string) {
 	return field, expectedVal
 }
 
+// validatorBuilder creates a Validator from a tag value parameter.
+// Returns the validator (nil if parameter is invalid in non-strict mode) and an error in strict mode.
+type validatorBuilder func(value string, strict bool) (Validator, error)
+
+// crossFieldValidatorBuilder creates a CrossFieldValidator from a tag value parameter.
+type crossFieldValidatorBuilder func(value string) CrossFieldValidator
+
+// buildFloatValidator is a helper for validators that require a numeric threshold parameter.
+func buildFloatValidator(tagName string, value string, strict bool, factory func(float64) Validator) (Validator, error) {
+	threshold, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		if strict {
+			return nil, fmt.Errorf("%w: %s requires a numeric value, got %q", ErrInvalidTagFormat, tagName, value)
+		}
+		return nil, nil //nolint:nilnil // non-strict mode silently ignores invalid args
+	}
+	return factory(threshold), nil
+}
+
+// validatorRegistry maps tag names to their builder functions.
+// Builders that ignore the value parameter use _ to indicate it's unused.
+//
+//nolint:gochecknoglobals // registry pattern requires package-level map for O(1) lookup
+var validatorRegistry = map[string]validatorBuilder{
+	// Sentinel
+	omitemptyTagValue: func(_ string, _ bool) (Validator, error) { return &omitemptyValidator{}, nil },
+
+	// Basic validators
+	requiredTagValue:            func(_ string, _ bool) (Validator, error) { return newRequiredValidator(), nil },
+	booleanTagValue:             func(_ string, _ bool) (Validator, error) { return newBooleanValidator(), nil },
+	alphaTagValue:               func(_ string, _ bool) (Validator, error) { return newAlphaValidator(), nil },
+	alphaSpaceTagValue:          func(_ string, _ bool) (Validator, error) { return newAlphaSpaceValidator(), nil },
+	alphaUnicodeTagValue:        func(_ string, _ bool) (Validator, error) { return newAlphaUnicodeValidator(), nil },
+	numericTagValue:             func(_ string, _ bool) (Validator, error) { return newNumericValidator(), nil },
+	numberTagValue:              func(_ string, _ bool) (Validator, error) { return newNumberValidator(), nil },
+	alphanumericTagValue:        func(_ string, _ bool) (Validator, error) { return newAlphanumericValidator(), nil },
+	alphanumericUnicodeTagValue: func(_ string, _ bool) (Validator, error) { return newAlphanumericUnicodeValidator(), nil },
+
+	// Comparison validators (with threshold)
+	equalTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("eq", v, s, func(t float64) Validator { return newEqualValidator(t) })
+	},
+	notEqualTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("ne", v, s, func(t float64) Validator { return newNotEqualValidator(t) })
+	},
+	greaterThanTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("gt", v, s, func(t float64) Validator { return newGreaterThanValidator(t) })
+	},
+	greaterThanEqualTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("gte", v, s, func(t float64) Validator { return newGreaterThanEqualValidator(t) })
+	},
+	lessThanTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("lt", v, s, func(t float64) Validator { return newLessThanValidator(t) })
+	},
+	lessThanEqualTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("lte", v, s, func(t float64) Validator { return newLessThanEqualValidator(t) })
+	},
+	minTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("min", v, s, func(t float64) Validator { return newMinValidator(t) })
+	},
+	maxTagValue: func(v string, s bool) (Validator, error) {
+		return buildFloatValidator("max", v, s, func(t float64) Validator { return newMaxValidator(t) })
+	},
+	lengthTagValue: func(value string, strict bool) (Validator, error) {
+		length, err := strconv.Atoi(value)
+		if err != nil {
+			if strict {
+				return nil, fmt.Errorf("%w: len requires an integer value, got %q", ErrInvalidTagFormat, value)
+			}
+			return nil, nil //nolint:nilnil // non-strict mode silently ignores invalid args
+		}
+		return newLengthValidator(length), nil
+	},
+
+	// String validators
+	oneOfTagValue: func(value string, _ bool) (Validator, error) {
+		if value != "" {
+			return newOneOfValidator(strings.Fields(value)), nil
+		}
+		return nil, nil //nolint:nilnil // empty value produces no validator
+	},
+	lowercaseValidatorTagValue: func(_ string, _ bool) (Validator, error) { return newLowercaseValidator(), nil },
+	uppercaseValidatorTagValue: func(_ string, _ bool) (Validator, error) { return newUppercaseValidator(), nil },
+	asciiTagValue:              func(_ string, _ bool) (Validator, error) { return newASCIIValidator(), nil },
+	printASCIITagValue:         func(_ string, _ bool) (Validator, error) { return newPrintASCIIValidator(), nil },
+
+	// Format validators
+	emailTagValue:      func(_ string, _ bool) (Validator, error) { return newEmailValidator(), nil },
+	uriTagValue:        func(_ string, _ bool) (Validator, error) { return newURIValidator(), nil },
+	urlTagValue:        func(_ string, _ bool) (Validator, error) { return newURLValidator(), nil },
+	httpURLTagValue:    func(_ string, _ bool) (Validator, error) { return newHTTPURLValidator(), nil },
+	httpsURLTagValue:   func(_ string, _ bool) (Validator, error) { return newHTTPSURLValidator(), nil },
+	urlEncodedTagValue: func(_ string, _ bool) (Validator, error) { return newURLEncodedValidator(), nil },
+	dataURITagValue:    func(_ string, _ bool) (Validator, error) { return newDataURIValidator(), nil },
+
+	// Network validators
+	ipAddrTagValue:  func(_ string, _ bool) (Validator, error) { return newIPAddrValidator(), nil },
+	ip4AddrTagValue: func(_ string, _ bool) (Validator, error) { return newIP4AddrValidator(), nil },
+	ip6AddrTagValue: func(_ string, _ bool) (Validator, error) { return newIP6AddrValidator(), nil },
+	cidrTagValue:    func(_ string, _ bool) (Validator, error) { return newCIDRValidator(), nil },
+	cidrv4TagValue:  func(_ string, _ bool) (Validator, error) { return newCIDRv4Validator(), nil },
+	cidrv6TagValue:  func(_ string, _ bool) (Validator, error) { return newCIDRv6Validator(), nil },
+	macTagValue:     func(_ string, _ bool) (Validator, error) { return newMACValidator(), nil },
+
+	// Identifier validators
+	uuidTagValue:            func(_ string, _ bool) (Validator, error) { return newUUIDValidator(), nil },
+	fqdnTagValue:            func(_ string, _ bool) (Validator, error) { return newFQDNValidator(), nil },
+	hostnameTagValue:        func(_ string, _ bool) (Validator, error) { return newHostnameValidator(), nil },
+	hostnameRFC1123TagValue: func(_ string, _ bool) (Validator, error) { return newHostnameRFC1123Validator(), nil },
+	hostnamePortTagValue:    func(_ string, _ bool) (Validator, error) { return newHostnamePortValidator(), nil },
+
+	// String content validators (with parameter)
+	startsWithTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newStartsWithValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	startsNotWithTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newStartsNotWithValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	endsWithTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newEndsWithValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	endsNotWithTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newEndsNotWithValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	containsTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newContainsValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	containsAnyTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newContainsAnyValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	containsRuneTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			runes := []rune(v)
+			if len(runes) > 0 {
+				return newContainsRuneValidator(runes[0]), nil
+			}
+		}
+		return nil, nil //nolint:nilnil // empty value produces no validator
+	},
+
+	// Exclusion validators (with parameter)
+	excludesTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newExcludesValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	excludesAllTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newExcludesAllValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+	excludesRuneTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			runes := []rune(v)
+			if len(runes) > 0 {
+				return newExcludesRuneValidator(runes[0]), nil
+			}
+		}
+		return nil, nil //nolint:nilnil // empty value produces no validator
+	},
+
+	// Misc validators
+	multibyteTagValue: func(_ string, _ bool) (Validator, error) { return newMultibyteValidator(), nil },
+	equalIgnoreCaseTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newEqualIgnoreCaseValidator(v), nil
+		}
+		return nil, nil //nolint:nlreturn,nilnil // compact builder
+	},
+	notEqualIgnoreCaseTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newNotEqualIgnoreCaseValidator(v), nil
+		}
+		return nil, nil //nolint:nlreturn,nilnil // compact builder
+	},
+
+	// Datetime validator
+	datetimeTagValue: func(v string, _ bool) (Validator, error) {
+		if v != "" {
+			return newDatetimeValidator(v), nil
+		}
+		return nil, nil
+	}, //nolint:nlreturn,nilnil // compact builder
+
+	// Phone number validator
+	e164TagValue: func(_ string, _ bool) (Validator, error) { return newE164Validator(), nil },
+
+	// Geolocation validators
+	latitudeTagValue:  func(_ string, _ bool) (Validator, error) { return newLatitudeValidator(), nil },
+	longitudeTagValue: func(_ string, _ bool) (Validator, error) { return newLongitudeValidator(), nil },
+
+	// UUID variant validators
+	uuid3TagValue: func(_ string, _ bool) (Validator, error) { return newUUID3Validator(), nil },
+	uuid4TagValue: func(_ string, _ bool) (Validator, error) { return newUUID4Validator(), nil },
+	uuid5TagValue: func(_ string, _ bool) (Validator, error) { return newUUID5Validator(), nil },
+	ulidTagValue:  func(_ string, _ bool) (Validator, error) { return newULIDValidator(), nil },
+
+	// Hexadecimal and color validators
+	hexadecimalTagValue: func(_ string, _ bool) (Validator, error) { return newHexadecimalValidator(), nil },
+	hexColorTagValue:    func(_ string, _ bool) (Validator, error) { return newHexColorValidator(), nil },
+	rgbTagValue:         func(_ string, _ bool) (Validator, error) { return newRGBValidator(), nil },
+	rgbaTagValue:        func(_ string, _ bool) (Validator, error) { return newRGBAValidator(), nil },
+	hslTagValue:         func(_ string, _ bool) (Validator, error) { return newHSLValidator(), nil },
+	hslaTagValue:        func(_ string, _ bool) (Validator, error) { return newHSLAValidator(), nil },
+}
+
+// crossFieldValidatorRegistry maps tag names to their builder functions.
+//
+//nolint:gochecknoglobals // registry pattern requires package-level map for O(1) lookup
+var crossFieldValidatorRegistry = map[string]crossFieldValidatorBuilder{
+	eqFieldTagValue:         func(v string) CrossFieldValidator { return newEqFieldValidator(v) },
+	neFieldTagValue:         func(v string) CrossFieldValidator { return newNeFieldValidator(v) },
+	gtFieldTagValue:         func(v string) CrossFieldValidator { return newGtFieldValidator(v) },
+	gteFieldTagValue:        func(v string) CrossFieldValidator { return newGteFieldValidator(v) },
+	ltFieldTagValue:         func(v string) CrossFieldValidator { return newLtFieldValidator(v) },
+	lteFieldTagValue:        func(v string) CrossFieldValidator { return newLteFieldValidator(v) },
+	fieldContainsTagValue:   func(v string) CrossFieldValidator { return newFieldContainsValidator(v) },
+	fieldExcludesTagValue:   func(v string) CrossFieldValidator { return newFieldExcludesValidator(v) },
+	requiredWithTagValue:    func(v string) CrossFieldValidator { return newRequiredWithValidator(v) },
+	requiredWithoutTagValue: func(v string) CrossFieldValidator { return newRequiredWithoutValidator(v) },
+}
+
 // parseValidateTag parses the validate tag string and returns validators and cross-field validators.
 // It returns an error if an unknown validate tag is encountered.
-func parseValidateTag(tag string) (validators, crossFieldValidators, error) {
+// The registry-based approach replaces the large switch statement for easier maintenance.
+func parseValidateTag(tag string, strict bool) (validators, crossFieldValidators, error) {
 	if tag == "" {
 		return nil, nil, nil
 	}
@@ -261,271 +529,31 @@ func parseValidateTag(tag string) (validators, crossFieldValidators, error) {
 			continue
 		}
 
-		// Handle validators with parameters (key=value format)
 		key, value := splitTagKeyValue(part)
 
+		// Check single-field validator registry
+		if builder, ok := validatorRegistry[key]; ok {
+			v, err := builder(value, strict)
+			if err != nil {
+				return nil, nil, err
+			}
+			if v != nil {
+				vals = append(vals, v)
+			}
+			continue
+		}
+
+		// Check cross-field validator registry
+		if builder, ok := crossFieldValidatorRegistry[key]; ok {
+			if value != "" {
+				crossVals = append(crossVals, builder(value))
+			}
+			continue
+		}
+
+		// Conditional required validators need special parsing (two-parameter format)
 		switch key {
-		// Basic validators
-		case requiredTagValue:
-			vals = append(vals, newRequiredValidator())
-		case booleanTagValue:
-			vals = append(vals, newBooleanValidator())
-		case alphaTagValue:
-			vals = append(vals, newAlphaValidator())
-		case alphaSpaceTagValue:
-			vals = append(vals, newAlphaSpaceValidator())
-		case alphaUnicodeTagValue:
-			vals = append(vals, newAlphaUnicodeValidator())
-		case numericTagValue:
-			vals = append(vals, newNumericValidator())
-		case numberTagValue:
-			vals = append(vals, newNumberValidator())
-		case alphanumericTagValue:
-			vals = append(vals, newAlphanumericValidator())
-		case alphanumericUnicodeTagValue:
-			vals = append(vals, newAlphanumericUnicodeValidator())
-
-		// Comparison validators (with threshold)
-		case equalTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newEqualValidator(threshold))
-			}
-		case notEqualTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newNotEqualValidator(threshold))
-			}
-		case greaterThanTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newGreaterThanValidator(threshold))
-			}
-		case greaterThanEqualTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newGreaterThanEqualValidator(threshold))
-			}
-		case lessThanTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newLessThanValidator(threshold))
-			}
-		case lessThanEqualTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newLessThanEqualValidator(threshold))
-			}
-		case minTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newMinValidator(threshold))
-			}
-		case maxTagValue:
-			if threshold, err := strconv.ParseFloat(value, 64); err == nil {
-				vals = append(vals, newMaxValidator(threshold))
-			}
-		case lengthTagValue:
-			if length, err := strconv.Atoi(value); err == nil {
-				vals = append(vals, newLengthValidator(length))
-			}
-
-		// String validators
-		case oneOfTagValue:
-			// oneof values are space-separated
-			if value != "" {
-				allowed := strings.Fields(value)
-				vals = append(vals, newOneOfValidator(allowed))
-			}
-		case lowercaseValidatorTagValue:
-			vals = append(vals, newLowercaseValidator())
-		case uppercaseValidatorTagValue:
-			vals = append(vals, newUppercaseValidator())
-		case asciiTagValue:
-			vals = append(vals, newASCIIValidator())
-		case printASCIITagValue:
-			vals = append(vals, newPrintASCIIValidator())
-
-		// Format validators
-		case emailTagValue:
-			vals = append(vals, newEmailValidator())
-		case uriTagValue:
-			vals = append(vals, newURIValidator())
-		case urlTagValue:
-			vals = append(vals, newURLValidator())
-		case httpURLTagValue:
-			vals = append(vals, newHTTPURLValidator())
-		case httpsURLTagValue:
-			vals = append(vals, newHTTPSURLValidator())
-		case urlEncodedTagValue:
-			vals = append(vals, newURLEncodedValidator())
-		case dataURITagValue:
-			vals = append(vals, newDataURIValidator())
-
-		// Network validators
-		case ipAddrTagValue:
-			vals = append(vals, newIPAddrValidator())
-		case ip4AddrTagValue:
-			vals = append(vals, newIP4AddrValidator())
-		case ip6AddrTagValue:
-			vals = append(vals, newIP6AddrValidator())
-		case cidrTagValue:
-			vals = append(vals, newCIDRValidator())
-		case cidrv4TagValue:
-			vals = append(vals, newCIDRv4Validator())
-		case cidrv6TagValue:
-			vals = append(vals, newCIDRv6Validator())
-
-		// Identifier validators
-		case uuidTagValue:
-			vals = append(vals, newUUIDValidator())
-		case fqdnTagValue:
-			vals = append(vals, newFQDNValidator())
-		case hostnameTagValue:
-			vals = append(vals, newHostnameValidator())
-		case hostnameRFC1123TagValue:
-			vals = append(vals, newHostnameRFC1123Validator())
-		case hostnamePortTagValue:
-			vals = append(vals, newHostnamePortValidator())
-
-		// String content validators (with parameter)
-		case startsWithTagValue:
-			if value != "" {
-				vals = append(vals, newStartsWithValidator(value))
-			}
-		case startsNotWithTagValue:
-			if value != "" {
-				vals = append(vals, newStartsNotWithValidator(value))
-			}
-		case endsWithTagValue:
-			if value != "" {
-				vals = append(vals, newEndsWithValidator(value))
-			}
-		case endsNotWithTagValue:
-			if value != "" {
-				vals = append(vals, newEndsNotWithValidator(value))
-			}
-		case containsTagValue:
-			if value != "" {
-				vals = append(vals, newContainsValidator(value))
-			}
-		case containsAnyTagValue:
-			// containsany values are space-separated
-			if value != "" {
-				substrs := strings.Fields(value)
-				vals = append(vals, newContainsAnyValidator(substrs))
-			}
-		case containsRuneTagValue:
-			if value != "" {
-				runes := []rune(value)
-				if len(runes) > 0 {
-					vals = append(vals, newContainsRuneValidator(runes[0]))
-				}
-			}
-
-		// Exclusion validators (with parameter)
-		case excludesTagValue:
-			if value != "" {
-				vals = append(vals, newExcludesValidator(value))
-			}
-		case excludesAllTagValue:
-			if value != "" {
-				vals = append(vals, newExcludesAllValidator(value))
-			}
-		case excludesRuneTagValue:
-			if value != "" {
-				runes := []rune(value)
-				if len(runes) > 0 {
-					vals = append(vals, newExcludesRuneValidator(runes[0]))
-				}
-			}
-
-		// Misc validators
-		case multibyteTagValue:
-			vals = append(vals, newMultibyteValidator())
-		case equalIgnoreCaseTagValue:
-			if value != "" {
-				vals = append(vals, newEqualIgnoreCaseValidator(value))
-			}
-		case notEqualIgnoreCaseTagValue:
-			if value != "" {
-				vals = append(vals, newNotEqualIgnoreCaseValidator(value))
-			}
-
-		// Datetime validator
-		case datetimeTagValue:
-			if value != "" {
-				vals = append(vals, newDatetimeValidator(value))
-			}
-
-		// Phone number validator
-		case e164TagValue:
-			vals = append(vals, newE164Validator())
-
-		// Geolocation validators
-		case latitudeTagValue:
-			vals = append(vals, newLatitudeValidator())
-		case longitudeTagValue:
-			vals = append(vals, newLongitudeValidator())
-
-		// UUID variant validators
-		case uuid3TagValue:
-			vals = append(vals, newUUID3Validator())
-		case uuid4TagValue:
-			vals = append(vals, newUUID4Validator())
-		case uuid5TagValue:
-			vals = append(vals, newUUID5Validator())
-		case ulidTagValue:
-			vals = append(vals, newULIDValidator())
-
-		// Hexadecimal and color validators
-		case hexadecimalTagValue:
-			vals = append(vals, newHexadecimalValidator())
-		case hexColorTagValue:
-			vals = append(vals, newHexColorValidator())
-		case rgbTagValue:
-			vals = append(vals, newRGBValidator())
-		case rgbaTagValue:
-			vals = append(vals, newRGBAValidator())
-		case hslTagValue:
-			vals = append(vals, newHSLValidator())
-		case hslaTagValue:
-			vals = append(vals, newHSLAValidator())
-
-		// Network validators
-		case macTagValue:
-			vals = append(vals, newMACValidator())
-
-		// Cross-field validators
-		case eqFieldTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newEqFieldValidator(value))
-			}
-		case neFieldTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newNeFieldValidator(value))
-			}
-		case gtFieldTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newGtFieldValidator(value))
-			}
-		case gteFieldTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newGteFieldValidator(value))
-			}
-		case ltFieldTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newLtFieldValidator(value))
-			}
-		case lteFieldTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newLteFieldValidator(value))
-			}
-		case fieldContainsTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newFieldContainsValidator(value))
-			}
-		case fieldExcludesTagValue:
-			if value != "" {
-				crossVals = append(crossVals, newFieldExcludesValidator(value))
-			}
-
-		// Conditional required validators (cross-field)
 		case requiredIfTagValue:
-			// Format: required_if=FieldName value
 			if value != "" {
 				field, expectedVal := parseRequiredIfParams(value)
 				if field != "" {
@@ -533,24 +561,12 @@ func parseValidateTag(tag string) (validators, crossFieldValidators, error) {
 				}
 			}
 		case requiredUnlessTagValue:
-			// Format: required_unless=FieldName value
 			if value != "" {
 				field, exceptVal := parseRequiredIfParams(value)
 				if field != "" {
 					crossVals = append(crossVals, newRequiredUnlessValidator(field, exceptVal))
 				}
 			}
-		case requiredWithTagValue:
-			// Format: required_with=FieldName
-			if value != "" {
-				crossVals = append(crossVals, newRequiredWithValidator(value))
-			}
-		case requiredWithoutTagValue:
-			// Format: required_without=FieldName
-			if value != "" {
-				crossVals = append(crossVals, newRequiredWithoutValidator(value))
-			}
-
 		default:
 			return nil, nil, fmt.Errorf("%w: unknown validate tag %q", ErrInvalidTagFormat, part)
 		}

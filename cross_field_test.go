@@ -441,13 +441,401 @@ func TestFieldExcludesValidator(t *testing.T) {
 	}
 }
 
+func TestRequiredIfValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		srcValue      string
+		targetValue   string
+		targetField   string
+		expectedValue string
+		wantErr       bool
+	}{
+		{
+			name:          "required when target matches and source empty fails",
+			srcValue:      "",
+			targetValue:   "active",
+			targetField:   "Status",
+			expectedValue: "active",
+			wantErr:       true,
+		},
+		{
+			name:          "required when target matches and source present passes",
+			srcValue:      "some-value",
+			targetValue:   "active",
+			targetField:   "Status",
+			expectedValue: "active",
+			wantErr:       false,
+		},
+		{
+			name:          "not required when target does not match",
+			srcValue:      "",
+			targetValue:   "inactive",
+			targetField:   "Status",
+			expectedValue: "active",
+			wantErr:       false,
+		},
+		{
+			name:          "not required when target is empty",
+			srcValue:      "",
+			targetValue:   "",
+			targetField:   "Status",
+			expectedValue: "active",
+			wantErr:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := newRequiredIfValidator(tt.targetField, tt.expectedValue)
+			got := v.Validate(tt.srcValue, tt.targetValue)
+			if (got != "") != tt.wantErr {
+				t.Errorf("requiredIfValidator.Validate() = %q, wantErr %v", got, tt.wantErr)
+			}
+			if v.Name() != requiredIfTagValue {
+				t.Errorf("requiredIfValidator.Name() = %q, want %q", v.Name(), requiredIfTagValue)
+			}
+			if v.TargetField() != tt.targetField {
+				t.Errorf("requiredIfValidator.TargetField() = %q, want %q", v.TargetField(), tt.targetField)
+			}
+		})
+	}
+}
+
+func TestRequiredUnlessValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		srcValue    string
+		targetValue string
+		targetField string
+		exceptValue string
+		wantErr     bool
+	}{
+		{
+			name:        "required when target does not match except value and source empty fails",
+			srcValue:    "",
+			targetValue: "admin",
+			targetField: "Role",
+			exceptValue: "guest",
+			wantErr:     true,
+		},
+		{
+			name:        "required when target does not match except value and source present passes",
+			srcValue:    "some-value",
+			targetValue: "admin",
+			targetField: "Role",
+			exceptValue: "guest",
+			wantErr:     false,
+		},
+		{
+			name:        "not required when target matches except value",
+			srcValue:    "",
+			targetValue: "guest",
+			targetField: "Role",
+			exceptValue: "guest",
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := newRequiredUnlessValidator(tt.targetField, tt.exceptValue)
+			got := v.Validate(tt.srcValue, tt.targetValue)
+			if (got != "") != tt.wantErr {
+				t.Errorf("requiredUnlessValidator.Validate() = %q, wantErr %v", got, tt.wantErr)
+			}
+			if v.Name() != requiredUnlessTagValue {
+				t.Errorf("requiredUnlessValidator.Name() = %q, want %q", v.Name(), requiredUnlessTagValue)
+			}
+			if v.TargetField() != tt.targetField {
+				t.Errorf("requiredUnlessValidator.TargetField() = %q, want %q", v.TargetField(), tt.targetField)
+			}
+		})
+	}
+}
+
+func TestRequiredWithValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		srcValue    string
+		targetValue string
+		targetField string
+		wantErr     bool
+	}{
+		{
+			name:        "required when target present and source empty fails",
+			srcValue:    "",
+			targetValue: "john@example.com",
+			targetField: "Email",
+			wantErr:     true,
+		},
+		{
+			name:        "required when target present and source present passes",
+			srcValue:    "John",
+			targetValue: "john@example.com",
+			targetField: "Email",
+			wantErr:     false,
+		},
+		{
+			name:        "not required when target absent",
+			srcValue:    "",
+			targetValue: "",
+			targetField: "Email",
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := newRequiredWithValidator(tt.targetField)
+			got := v.Validate(tt.srcValue, tt.targetValue)
+			if (got != "") != tt.wantErr {
+				t.Errorf("requiredWithValidator.Validate() = %q, wantErr %v", got, tt.wantErr)
+			}
+			if v.Name() != requiredWithTagValue {
+				t.Errorf("requiredWithValidator.Name() = %q, want %q", v.Name(), requiredWithTagValue)
+			}
+			if v.TargetField() != tt.targetField {
+				t.Errorf("requiredWithValidator.TargetField() = %q, want %q", v.TargetField(), tt.targetField)
+			}
+		})
+	}
+}
+
+func TestRequiredWithoutValidator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		srcValue    string
+		targetValue string
+		targetField string
+		wantErr     bool
+	}{
+		{
+			name:        "required when target absent and source empty fails",
+			srcValue:    "",
+			targetValue: "",
+			targetField: "Phone",
+			wantErr:     true,
+		},
+		{
+			name:        "required when target absent and source present passes",
+			srcValue:    "john@example.com",
+			targetValue: "",
+			targetField: "Phone",
+			wantErr:     false,
+		},
+		{
+			name:        "not required when target present",
+			srcValue:    "",
+			targetValue: "555-1234",
+			targetField: "Phone",
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			v := newRequiredWithoutValidator(tt.targetField)
+			got := v.Validate(tt.srcValue, tt.targetValue)
+			if (got != "") != tt.wantErr {
+				t.Errorf("requiredWithoutValidator.Validate() = %q, wantErr %v", got, tt.wantErr)
+			}
+			if v.Name() != requiredWithoutTagValue {
+				t.Errorf("requiredWithoutValidator.Name() = %q, want %q", v.Name(), requiredWithoutTagValue)
+			}
+			if v.TargetField() != tt.targetField {
+				t.Errorf("requiredWithoutValidator.TargetField() = %q, want %q", v.TargetField(), tt.targetField)
+			}
+		})
+	}
+}
+
+func TestConditionalCrossFieldValidation_Processor(t *testing.T) {
+	t.Parallel()
+
+	type RequiredIfRecord struct {
+		Status  string
+		Details string `validate:"required_if=Status active"`
+	}
+
+	t.Run("required_if triggers when condition met", func(t *testing.T) {
+		t.Parallel()
+		csvData := "status,details\nactive,\n"
+		var records []RequiredIfRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 1 {
+			t.Errorf("expected 1 error, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	t.Run("required_if passes when condition met and value present", func(t *testing.T) {
+		t.Parallel()
+		csvData := "status,details\nactive,some details\n"
+		var records []RequiredIfRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	t.Run("required_if does not trigger when condition not met", func(t *testing.T) {
+		t.Parallel()
+		csvData := "status,details\ninactive,\n"
+		var records []RequiredIfRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	type RequiredUnlessRecord struct {
+		Type    string
+		Profile string `validate:"required_unless=Type guest"`
+	}
+
+	t.Run("required_unless triggers when condition not met", func(t *testing.T) {
+		t.Parallel()
+		csvData := "type,profile\nadmin,\n"
+		var records []RequiredUnlessRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 1 {
+			t.Errorf("expected 1 error, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	t.Run("required_unless passes when except value matches", func(t *testing.T) {
+		t.Parallel()
+		csvData := "type,profile\nguest,\n"
+		var records []RequiredUnlessRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	type RequiredWithRecord struct {
+		Email string
+		Name  string `validate:"required_with=Email"`
+	}
+
+	t.Run("required_with triggers when target present", func(t *testing.T) {
+		t.Parallel()
+		csvData := "email,name\njohn@example.com,\n"
+		var records []RequiredWithRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 1 {
+			t.Errorf("expected 1 error, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	t.Run("required_with passes when target absent", func(t *testing.T) {
+		t.Parallel()
+		csvData := "email,name\n,\n"
+		var records []RequiredWithRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	type RequiredWithoutRecord struct {
+		Phone string
+		Email string `validate:"required_without=Phone"`
+	}
+
+	t.Run("required_without triggers when target absent", func(t *testing.T) {
+		t.Parallel()
+		csvData := "phone,email\n,\n"
+		var records []RequiredWithoutRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 1 {
+			t.Errorf("expected 1 error, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	t.Run("required_without passes when target present", func(t *testing.T) {
+		t.Parallel()
+		csvData := "phone,email\n555-1234,\n"
+		var records []RequiredWithoutRecord
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+}
+
 func TestCrossFieldValidation_Integration(t *testing.T) {
 	t.Parallel()
 
 	// Test parsing cross-field validators
 	t.Run("parse cross-field validators", func(t *testing.T) {
 		t.Parallel()
-		vals, crossVals, err := parseValidateTag("gtfield=MaxPrice")
+		vals, crossVals, err := parseValidateTag("gtfield=MaxPrice", false)
 		if err != nil {
 			t.Fatalf("parseValidateTag() error = %v", err)
 		}
@@ -470,7 +858,7 @@ func TestCrossFieldValidation_Integration(t *testing.T) {
 	// Test multiple cross-field validators
 	t.Run("parse multiple cross-field validators", func(t *testing.T) {
 		t.Parallel()
-		vals, crossVals, err := parseValidateTag("required,eqfield=Other,nefield=Another")
+		vals, crossVals, err := parseValidateTag("required,eqfield=Other,nefield=Another", false)
 		if err != nil {
 			t.Fatalf("parseValidateTag() error = %v", err)
 		}
@@ -500,7 +888,7 @@ func TestCrossFieldValidation_Integration(t *testing.T) {
 		}
 
 		for _, tc := range testCases {
-			_, crossVals, err := parseValidateTag(tc.tag)
+			_, crossVals, err := parseValidateTag(tc.tag, false)
 			if err != nil {
 				t.Errorf("tag %q: parseValidateTag() error = %v", tc.tag, err)
 				continue
@@ -638,6 +1026,54 @@ func TestCrossFieldValidation_Processor(t *testing.T) {
 
 		if len(result.Errors) != 1 {
 			t.Errorf("expected 1 error for non-existent field, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	type MissingSrcField struct {
+		SrcField    string `validate:"eqfield=TargetField"`
+		TargetField string
+	}
+
+	t.Run("cross-field validation runs when source column is missing from CSV", func(t *testing.T) {
+		t.Parallel()
+		// CSV has only target_field column, not src_field
+		csvData := "target_field\nhello\n"
+		var records []MissingSrcField
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		// Source column missing means srcValue="" which != "hello", so eqfield should fail
+		if len(result.Errors) == 0 {
+			t.Error("expected validation error when source column is missing, got none")
+		}
+		valErrors := result.ValidationErrors()
+		if len(valErrors) == 0 {
+			t.Fatal("expected ValidationError, got none")
+		}
+		if valErrors[0].Tag != "eqfield" {
+			t.Errorf("Tag = %q, want %q", valErrors[0].Tag, "eqfield")
+		}
+	})
+
+	t.Run("cross-field validation with missing source column treats value as empty string", func(t *testing.T) {
+		t.Parallel()
+		// CSV has only target_field column; source value will be "" which equals ""
+		csvData := "target_field\n\n"
+		var records []MissingSrcField
+
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+
+		// srcValue="" == targetValue="" so eqfield should pass
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors when both fields are empty, got %d: %v", len(result.Errors), result.Errors)
 		}
 	})
 }

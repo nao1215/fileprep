@@ -78,5 +78,5 @@
 //   - url: Must be a valid URL
 //   - And many more...
 //
-// See CLAUDE.md for the complete list of supported validators.
+// See https://pkg.go.dev/github.com/nao1215/fileprep for the complete list of supported validators.
 package fileprep

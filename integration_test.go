@@ -1,6 +1,7 @@
 package fileprep
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -8,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/nao1215/fileparser"
+	"github.com/parquet-go/parquet-go"
 )
 
 // TestIntegration_AllPrepTags tests all prep tags in an integrated manner
@@ -1015,5 +1018,260 @@ func TestIntegration_CompressedJSONL(t *testing.T) {
 			// Verify JSONL output is re-parseable
 			verifyJSONLOutput(t, pipeReader)
 		})
+	}
+}
+
+// TestIntegration_XLSXProcessing tests XLSX file processing with prep and validation.
+// sample.xlsx has headers [id, name] and rows: [1,Gina], [2,Yulia], [3,Vika].
+func TestIntegration_XLSXProcessing(t *testing.T) {
+	t.Parallel()
+
+	type TestRecord struct {
+		ID   string `prep:"trim" validate:"required,numeric"`
+		Name string `prep:"trim" validate:"required"`
+	}
+
+	file, err := os.Open(filepath.Join("testdata", "sample.xlsx"))
+	if err != nil {
+		t.Fatalf("os.Open() error = %v", err)
+	}
+	defer file.Close()
+
+	var records []TestRecord
+
+	processor := NewProcessor(fileparser.XLSX)
+	pipeReader, result, err := processor.Process(file, &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	// Drain output
+	go func() {
+		_, _ = io.Copy(io.Discard, pipeReader) //nolint:errcheck // discarding output in test
+	}()
+
+	if result.OriginalFormat != fileparser.XLSX {
+		t.Errorf("OriginalFormat = %v, want %v", result.OriginalFormat, fileparser.XLSX)
+	}
+
+	// Verify exact record contents after preprocessing
+	want := []TestRecord{
+		{ID: "1", Name: "Gina"},
+		{ID: "2", Name: "Yulia"},
+		{ID: "3", Name: "Vika"},
+	}
+	if diff := cmp.Diff(want, records); diff != "" {
+		t.Errorf("records mismatch (-want +got):\n%s", diff)
+	}
+
+	if result.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", result.RowCount)
+	}
+	if result.ValidRowCount != 3 {
+		t.Errorf("ValidRowCount = %d, want 3", result.ValidRowCount)
+	}
+}
+
+// TestIntegration_XLSXWithValidationErrors tests XLSX processing detects validation errors.
+// sample.xlsx has headers [id, name] and rows: [1,Gina], [2,Yulia], [3,Vika].
+// We map to a strict struct requiring an "email" column which doesn't exist, triggering errors.
+func TestIntegration_XLSXWithValidationErrors(t *testing.T) {
+	t.Parallel()
+
+	type StrictRecord struct {
+		ID    string `validate:"required,numeric"`
+		Name  string `validate:"required"`
+		Email string `validate:"required,email"`
+	}
+
+	file, err := os.Open(filepath.Join("testdata", "sample.xlsx"))
+	if err != nil {
+		t.Fatalf("os.Open() error = %v", err)
+	}
+	defer file.Close()
+
+	var records []StrictRecord
+
+	processor := NewProcessor(fileparser.XLSX)
+	pipeReader, result, err := processor.Process(file, &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	// Drain output
+	go func() {
+		_, _ = io.Copy(io.Discard, pipeReader) //nolint:errcheck // discarding output in test
+	}()
+
+	if result.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", result.RowCount)
+	}
+
+	valErrors := result.ValidationErrors()
+	if len(valErrors) == 0 {
+		t.Fatal("expected validation errors from XLSX data with missing required email column")
+	}
+
+	// Every row should fail the "required" check on the email column (column not in XLSX)
+	foundEmailRequired := false
+	for _, ve := range valErrors {
+		if ve.Column == "email" && ve.Tag == "required" {
+			foundEmailRequired = true
+			break
+		}
+	}
+	if !foundEmailRequired {
+		t.Error("expected validation error for missing required email column")
+	}
+
+	// Verify all 3 rows fail email validation
+	emailErrors := 0
+	for _, ve := range valErrors {
+		if ve.Column == "email" {
+			emailErrors++
+		}
+	}
+	// Each row should have at least required + email validation errors
+	if emailErrors < 3 {
+		t.Errorf("expected at least 3 email validation errors (one per row), got %d", emailErrors)
+	}
+}
+
+// TestIntegration_Parquet_FullPipeline tests Parquet end-to-end with prep, validation, and cmp.Diff
+func TestIntegration_Parquet_FullPipeline(t *testing.T) {
+	t.Parallel()
+
+	type ParquetRow struct {
+		Name  string `parquet:"name"`
+		Email string `parquet:"email"`
+		Age   string `parquet:"age"`
+	}
+
+	type ResultRecord struct {
+		Name  string `prep:"trim,uppercase" validate:"required"`
+		Email string `prep:"trim,lowercase" validate:"email"`
+		Age   string `validate:"numeric"`
+	}
+
+	rows := []ParquetRow{
+		{Name: "  alice  ", Email: "  ALICE@EXAMPLE.COM  ", Age: "30"},
+		{Name: "  bob  ", Email: "  BOB@EXAMPLE.COM  ", Age: "25"},
+		{Name: "", Email: "nobody@example.com", Age: "99"},
+	}
+
+	var buf bytes.Buffer
+	writer := parquet.NewGenericWriter[ParquetRow](&buf)
+	if _, err := writer.Write(rows); err != nil {
+		t.Fatalf("failed to write parquet data: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("failed to close parquet writer: %v", err)
+	}
+
+	var records []ResultRecord
+	processor := NewProcessor(fileparser.Parquet)
+	pipeReader, result, err := processor.Process(bytes.NewReader(buf.Bytes()), &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	// Drain output to avoid blocking
+	go func() {
+		_, _ = io.Copy(io.Discard, pipeReader) //nolint:errcheck // discarding output in test
+	}()
+
+	// Row counts
+	if result.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", result.RowCount)
+	}
+	// Third row has empty name → required fails, so valid = 2
+	if result.ValidRowCount != 2 {
+		t.Errorf("ValidRowCount = %d, want 2", result.ValidRowCount)
+	}
+
+	// Verify preprocessed records using cmp.Diff
+	want := []ResultRecord{
+		{Name: "ALICE", Email: "alice@example.com", Age: "30"},
+		{Name: "BOB", Email: "bob@example.com", Age: "25"},
+		{Name: "", Email: "nobody@example.com", Age: "99"},
+	}
+	if diff := cmp.Diff(want, records); diff != "" {
+		t.Errorf("records mismatch (-want +got):\n%s", diff)
+	}
+
+	// Verify validation errors
+	valErrors := result.ValidationErrors()
+	if len(valErrors) != 1 {
+		t.Errorf("expected 1 validation error, got %d", len(valErrors))
+	}
+	if len(valErrors) > 0 && valErrors[0].Row != 3 {
+		t.Errorf("expected error on row 3, got row %d", valErrors[0].Row)
+	}
+
+	// Verify original format
+	if result.OriginalFormat != fileparser.Parquet {
+		t.Errorf("OriginalFormat = %v, want %v", result.OriginalFormat, fileparser.Parquet)
+	}
+
+	// Verify columns
+	wantCols := []string{"name", "email", "age"}
+	if diff := cmp.Diff(wantCols, result.Columns); diff != "" {
+		t.Errorf("Columns mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestIntegration_Parquet_OutputAsCSV verifies Parquet output is valid CSV
+func TestIntegration_Parquet_OutputAsCSV(t *testing.T) {
+	t.Parallel()
+
+	type ParquetRow struct {
+		Name string `parquet:"name"`
+		City string `parquet:"city"`
+	}
+
+	type ResultRecord struct {
+		Name string `prep:"trim"`
+		City string `prep:"uppercase"`
+	}
+
+	rows := []ParquetRow{
+		{Name: "  Alice  ", City: "tokyo"},
+		{Name: "Bob", City: "osaka"},
+	}
+
+	var buf bytes.Buffer
+	writer := parquet.NewGenericWriter[ParquetRow](&buf)
+	if _, err := writer.Write(rows); err != nil {
+		t.Fatalf("failed to write parquet data: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("failed to close parquet writer: %v", err)
+	}
+
+	var records []ResultRecord
+	processor := NewProcessor(fileparser.Parquet)
+	pipeReader, _, err := processor.Process(bytes.NewReader(buf.Bytes()), &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	// Read output CSV
+	outputBytes, err := io.ReadAll(pipeReader)
+	if err != nil {
+		t.Fatalf("failed to read output: %v", err)
+	}
+	output := string(outputBytes)
+
+	// Should contain CSV header
+	if !strings.Contains(output, "name") || !strings.Contains(output, "city") {
+		t.Errorf("output missing CSV header columns: %q", output)
+	}
+
+	// Should contain preprocessed values
+	if !strings.Contains(output, "Alice") {
+		t.Errorf("output missing trimmed name 'Alice': %q", output)
+	}
+	if !strings.Contains(output, "TOKYO") {
+		t.Errorf("output missing uppercased city 'TOKYO': %q", output)
 	}
 }

@@ -23,8 +23,9 @@
 - 压缩支持：gzip (.gz)、bzip2 (.bz2)、xz (.xz)、zstd (.zst)、zlib (.z)、snappy (.snappy)、s2 (.s2)、lz4 (.lz4)
 - 基于名称的列绑定：字段自动匹配 `snake_case` 列名，可通过 `name` 标签自定义
 - 基于 struct 标签的预处理（`prep` 标签）：trim、lowercase、uppercase、默认值等
-- 基于 struct 标签的验证（`validate` 标签）：required 等
+- 基于 struct 标签的验证（`validate` 标签）：required、omitempty 等
 - [filesql](https://github.com/nao1215/filesql) 无缝集成：返回 `io.Reader` 可直接用于 filesql
+- 处理器选项：`WithStrictTagParsing()` 用于检测标签配置错误，`WithValidRowsOnly()` 用于过滤输出
 - 详细的错误报告：每个错误包含行和列信息
 
 ## 安装
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Jane Smith,jane@example.com,25
 姓名："John Doe"，邮箱："john@example.com"
 姓名："Jane Smith"，邮箱："jane@example.com"
 ```
+
+## 使用 fileprep 之前
+
+### JSON/JSONL 使用单个 "data" 列
+
+JSON/JSONL 文件被解析为名为 `"data"` 的单列。每个数组元素（JSON）或每一行（JSONL）成为包含原始 JSON 字符串的一行。
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+输出始终是紧凑的 JSONL。如果 prep 标签破坏了 JSON 结构，`Process` 返回 `ErrInvalidJSONAfterPrep`。如果所有行最终都为空，则返回 `ErrEmptyJSONOutput`。
+
+### 列匹配区分大小写
+
+`UserName` 通过自动 snake_case 映射到 `user_name`。`User_Name`、`USER_NAME`、`userName` 等表头**不会**匹配。当表头不同时使用 `name` 标签：
+
+```go
+type Record struct {
+    UserName string                 // 仅匹配 "user_name"
+    Email    string `name:"EMAIL"`  // 精确匹配 "EMAIL"
+}
+```
+
+### 重复表头：第一列优先
+
+如果文件包含 `id,id,name`，第一个 `id` 列用于绑定，第二个被忽略。
+
+### 缺失列变为空字符串
+
+如果结构体字段对应的列不存在，值为 `""`。添加 `validate:"required"` 可在解析时捕获此情况。
+
+### Excel：仅处理第一个工作表
+
+多工作表的 `.xlsx` 文件将静默忽略第一个之后的所有工作表。
 
 ## 高级示例
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // 真实的"脏" CSV 数据
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | 标签 | 描述 | 示例 |
 |------|------|------|
 | `required` | 字段不能为空 | `validate:"required"` |
+| `omitempty` | 如果值为空则跳过后续验证器 | `validate:"omitempty,email"` |
 | `boolean` | 必须是 true、false、0 或 1 | `validate:"boolean"` |
 
 ### 字符类型验证器
@@ -510,6 +548,27 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | `required_with=Field` | 如果字段存在则必填 | `validate:"required_with=Email"` |
 | `required_without=Field` | 如果字段不存在则必填 | `validate:"required_without=Phone"` |
 
+**示例：**
+
+```go
+type User struct {
+    Role    string
+    // 当 Role 为 "admin" 时 Profile 为必填，其他角色为可选
+    Profile string `validate:"required_if=Role admin"`
+    // 除非 Role 为 "guest"，否则 Bio 为必填
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // 当 Email 非空时 Name 为必填
+    Name  string `validate:"required_with=Email"`
+    // Email 和 BackupEmail 至少需要提供一个
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## 支持的文件格式
 
 | 格式 | 扩展名 | 压缩格式 |
@@ -536,10 +595,6 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | lz4 | `.lz4` | 极速压缩 |
 
 **Parquet 压缩说明**：外部压缩（`.parquet.gz` 等）是针对容器文件本身的。Parquet 文件还可能使用内部压缩（Snappy、GZIP、LZ4、ZSTD），这由 parquet-go 库透明处理。
-
-**Excel 文件说明**：只处理**第一个工作表**。多工作表工作簿中的后续工作表将被忽略。
-
-**JSON/JSONL 文件说明**：JSON/JSONL 数据存储在包含原始 JSON 字符串的单个 `"data"` 列中。JSON 数组的每个元素或 JSONL 的每一行成为一行。JSON 输入以紧凑 JSONL（每行一个 JSON 值）形式输出。预处理标签作用于原始 JSON 字符串，而非其中的单个字段。如果预处理破坏了 JSON 结构，`Process` 返回 `ErrInvalidJSONAfterPrep`。如果预处理后所有行都变为空，`Process` 返回 `ErrEmptyJSONOutput`。
 
 ## 与 filesql 集成
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## 处理器选项
+
+`NewProcessor` 接受函数选项来自定义行为：
+
+### WithStrictTagParsing
+
+默认情况下，无效的标签参数（例如，在期望数字的地方使用 `eq=abc`）会被静默忽略。启用严格模式可以检测这些配置错误：
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// 如果标签参数无效（例如："eq=abc"、"truncate=xyz"），将返回错误
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+默认情况下，输出包含所有行（有效和无效）。使用 `WithValidRowsOnly` 将输出过滤为仅包含有效行：
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader 仅包含通过所有验证的行
+// records 仅包含有效的结构体
+// result.RowCount 包含所有行；result.ValidRowCount 包含有效行数
+// result.Errors 仍然报告所有验证失败
+```
+
+选项可以组合使用：
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## 设计考虑
 
 ### 基于名称的列绑定
 
-结构体字段**按名称**而非按位置映射到文件列。字段名自动转换为 `snake_case` 以匹配 CSV 列标题：
-
-```go
-// 文件列：user_name、email_address、phone_number（任意顺序）
-type User struct {
-    UserName     string  // → 匹配 "user_name" 列
-    EmailAddress string  // → 匹配 "email_address" 列
-    PhoneNumber  string  // → 匹配 "phone_number" 列
-}
-```
-
-**列顺序无关紧要** — 字段按名称匹配，因此您可以重新排列 CSV 中的列而无需更改结构体。
-
-#### 使用 `name` 标签自定义列名
-
-使用 `name` 标签覆盖自动生成的列名：
+结构体字段**按名称**而非按位置映射到文件列。字段名自动转换为 `snake_case` 以匹配列标题。文件中的列顺序无关紧要。
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → 匹配 "user" 列（而非 "user_name"）
-    Email    string `name:"mail_addr"`  // → 匹配 "mail_addr" 列（而非 "email"）
-    Age      string                     // → 匹配 "age" 列（自动 snake_case）
-}
-```
-
-#### 缺失列的行为
-
-如果结构体字段对应的 CSV 列不存在，字段值将被视为空字符串。验证仍会运行，因此 `required` 将捕获缺失的列：
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // 如果 "name" 列缺失则报错
-    Country string                        // 如果 "country" 列缺失则为空字符串
-}
-```
-
-#### 大小写敏感性和重复标题
-
-**标题匹配区分大小写且精确匹配。** 结构体字段 `UserName` 映射到 `user_name`，但 `User_Name`、`USER_NAME` 或 `userName` 等标题将**不会**匹配：
-
-```go
-type User struct {
-    UserName string  // ✓ 匹配 "user_name"
-                     // ✗ 不匹配 "User_Name"、"USER_NAME"、"userName"
-}
-```
-
-这适用于所有文件格式：CSV、TSV、LTSV 键和 Parquet/XLSX 列名都必须精确匹配。
-
-**重复的列名：** 如果文件包含重复的标题名（例如 `id,id,name`），将使用**第一次出现**进行绑定：
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first"（第一个 "id" 列获胜）
-```
-
-#### 格式特定说明
-
-**LTSV、Parquet 和 XLSX** 遵循相同的区分大小写匹配规则。键/列名必须精确匹配：
-
-```go
-type Record struct {
-    UserID string                 // 期望 "user_id" 键/列
-    Email  string `name:"EMAIL"`  // 对于非 snake_case 列使用 name 标签
+    UserName string `name:"user"`       // 匹配 "user" 列（而非 "user_name"）
+    Email    string `name:"mail_addr"`  // 匹配 "mail_addr" 列（而非 "email"）
+    Age      string                     // 匹配 "age" 列（自动 snake_case）
 }
 ```
 
 如果您的 LTSV 键使用连字符（`user-id`）或 Parquet/XLSX 列使用驼峰命名（`userId`），请使用 `name` 标签指定确切的列名。
+
+有关大小写敏感规则、重复标题行为和缺失列处理，请参阅 [使用 fileprep 之前](#使用-fileprep-之前)。
 
 ### 内存使用
 
@@ -693,6 +733,7 @@ make bench-all
 ## 相关或启发项目
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - CSV、TSV、LTSV、Parquet、Excel 的 SQL 驱动，支持 gzip、bzip2、xz、zstd。
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - CSV/TSV/LTSV、Parquet、Excel 的 DataFrame API。
 - [nao1215/csv](https://github.com/nao1215/csv) - 带验证和简单 DataFrame 的 Go CSV 读取库。
 - [go-playground/validator](https://github.com/go-playground/validator) - Go 结构体和字段验证，包括跨字段、跨结构体、Map、Slice 和 Array 验证
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - go-header-csv 是带标题的 CSV 编码器/解码器。

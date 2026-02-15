@@ -23,7 +23,8 @@ Mientras estudiaba aprendizaje automático, me di cuenta: "Si extiendo [nao1215/
 - Soporte de compresión: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - Vinculación de columnas por nombre: Los campos coinciden automáticamente con nombres de columna en `snake_case`, personalizable con la etiqueta `name`
 - Preprocesamiento basado en etiquetas struct (`prep`): trim, lowercase, uppercase, valores por defecto
-- Validación basada en etiquetas struct (`validate`): required y más
+- Validación basada en etiquetas struct (`validate`): required, omitempty y más
+- Opciones del procesador: `WithStrictTagParsing()` para detectar errores de configuración de tags, `WithValidRowsOnly()` para filtrar la salida
 - Integración con [filesql](https://github.com/nao1215/filesql): Devuelve `io.Reader` para uso directo con filesql
 - Informe detallado de errores: Información de fila y columna para cada error
 
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Procesadas 2 filas, 2 válidas
 Nombre: "John Doe", Email: "john@example.com"
 Nombre: "Jane Smith", Email: "jane@example.com"
 ```
+
+## Antes de usar fileprep
+
+### JSON/JSONL usa una única columna "data"
+
+Los archivos JSON/JSONL se parsean en una única columna llamada `"data"`. Cada elemento del array (JSON) o línea (JSONL) se convierte en una fila que contiene la cadena JSON sin procesar.
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+La salida siempre es JSONL compacto. Si un tag prep rompe la estructura JSON, `Process` devuelve `ErrInvalidJSONAfterPrep`. Si todas las filas terminan vacías, devuelve `ErrEmptyJSONOutput`.
+
+### La coincidencia de columnas distingue mayúsculas y minúsculas
+
+`UserName` se mapea a `user_name` mediante snake_case automático. Encabezados como `User_Name`, `USER_NAME`, `userName` **no** coinciden. Use el tag `name` cuando los encabezados difieran:
+
+```go
+type Record struct {
+    UserName string                 // coincide solo con "user_name"
+    Email    string `name:"EMAIL"`  // coincide exactamente con "EMAIL"
+}
+```
+
+### Encabezados duplicados: la primera columna gana
+
+Si un archivo tiene `id,id,name`, la primera columna `id` se usa para el enlace. La segunda se ignora.
+
+### Las columnas faltantes se convierten en cadenas vacías
+
+Si no existe una columna para un campo struct, el valor es `""`. Agregue `validate:"required"` para detectar esto en tiempo de parseo.
+
+### Excel: solo se procesa la primera hoja
+
+Los archivos `.xlsx` con múltiples hojas ignorarán silenciosamente todas las hojas después de la primera.
 
 ## Ejemplos Avanzados
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // Datos CSV desordenados del mundo real
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ Se pueden combinar múltiples etiquetas: `validate:"required,email"`
 | Etiqueta | Descripción | Ejemplo |
 |----------|-------------|---------|
 | `required` | El campo no debe estar vacío | `validate:"required"` |
+| `omitempty` | Omitir validadores posteriores si el valor está vacío | `validate:"omitempty,email"` |
 | `boolean` | Debe ser true, false, 0 o 1 | `validate:"boolean"` |
 
 ### Validadores de Tipo de Carácter
@@ -510,6 +548,27 @@ Se pueden combinar múltiples etiquetas: `validate:"required,email"`
 | `required_with=Field` | Requerido si el campo está presente | `validate:"required_with=Email"` |
 | `required_without=Field` | Requerido si el campo está ausente | `validate:"required_without=Phone"` |
 
+**Ejemplos:**
+
+```go
+type User struct {
+    Role    string
+    // Profile es obligatorio cuando Role es "admin", opcional para otros roles
+    Profile string `validate:"required_if=Role admin"`
+    // Bio es obligatorio a menos que Role sea "guest"
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // Name es obligatorio cuando Email no está vacío
+    Name  string `validate:"required_with=Email"`
+    // Se debe proporcionar al menos Email o BackupEmail
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## Formatos de Archivo Soportados
 
 | Formato | Extensión | Extensiones Comprimidas |
@@ -536,10 +595,6 @@ Se pueden combinar múltiples etiquetas: `validate:"required,email"`
 | lz4 | `.lz4` | github.com/pierrec/lz4/v4 | Pure Go |
 
 **Nota sobre compresión Parquet**: La compresión externa (`.parquet.gz`, etc.) es para el archivo contenedor en sí. Los archivos Parquet también pueden usar compresión interna (Snappy, GZIP, LZ4, ZSTD) que es manejada de forma transparente por la biblioteca parquet-go.
-
-**Nota sobre archivos Excel**: Solo se procesa la **primera hoja**. Las hojas siguientes en libros de trabajo de múltiples hojas serán ignoradas.
-
-**Nota sobre archivos JSON/JSONL**: Los datos JSON/JSONL se almacenan en una única columna `"data"` que contiene cadenas JSON sin procesar. Cada elemento de un array JSON o línea JSONL se convierte en una fila. La entrada JSON se emite como JSONL compacto (un valor JSON por línea). Las etiquetas de preprocesamiento operan sobre la cadena JSON sin procesar, no sobre campos individuales dentro de ella. Si el preprocesamiento destruye la estructura JSON, `Process` devuelve `ErrInvalidJSONAfterPrep`. Si todas las filas quedan vacías después del preprocesamiento, `Process` devuelve `ErrEmptyJSONOutput`.
 
 ## Integración con filesql
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## Opciones del Procesador
+
+`NewProcessor` acepta opciones funcionales para personalizar el comportamiento:
+
+### WithStrictTagParsing
+
+Por defecto, los argumentos de tags inválidos (por ejemplo, `eq=abc` donde se espera un número) se ignoran silenciosamente. Habilite el modo estricto para detectar estas configuraciones incorrectas:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// Retorna un error si algún argumento de tag es inválido (ej: "eq=abc", "truncate=xyz")
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+Por defecto, la salida incluye todas las filas (válidas e inválidas). Use `WithValidRowsOnly` para filtrar la salida solo a filas válidas:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader contiene solo las filas que pasaron todas las validaciones
+// records contiene solo structs válidos
+// result.RowCount incluye todas las filas; result.ValidRowCount tiene el conteo válido
+// result.Errors aún reporta todos los fallos de validación
+```
+
+Las opciones se pueden combinar:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## Consideraciones de Diseño
 
 ### Vinculación de Columnas por Nombre
 
-Los campos struct se mapean a las columnas del archivo **por nombre**, no por posición. Los nombres de campo se convierten automáticamente a `snake_case` para coincidir con los encabezados de columna CSV:
-
-```go
-// Columnas del archivo: user_name, email_address, phone_number (cualquier orden)
-type User struct {
-    UserName     string  // → coincide con columna "user_name"
-    EmailAddress string  // → coincide con columna "email_address"
-    PhoneNumber  string  // → coincide con columna "phone_number"
-}
-```
-
-**El orden de las columnas no importa** - los campos se emparejan por nombre, por lo que puede reordenar las columnas en su CSV sin cambiar su struct.
-
-#### Nombres de Columna Personalizados con Etiqueta `name`
-
-Use la etiqueta `name` para sobrescribir el nombre de columna generado automáticamente:
+Los campos struct se mapean a las columnas del archivo **por nombre**, no por posición. Los nombres de campo se convierten automáticamente a `snake_case` para coincidir con los encabezados de columna. El orden de las columnas en el archivo no importa.
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → coincide con columna "user" (no "user_name")
-    Email    string `name:"mail_addr"`  // → coincide con columna "mail_addr" (no "email")
-    Age      string                     // → coincide con columna "age" (snake_case automático)
-}
-```
-
-#### Comportamiento de Columnas Faltantes
-
-Si una columna CSV no existe para un campo struct, el valor del campo se trata como cadena vacía. La validación aún se ejecuta, por lo que `required` detectará columnas faltantes:
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // Error si falta la columna "name"
-    Country string                        // Cadena vacía si falta la columna "country"
-}
-```
-
-#### Sensibilidad a Mayúsculas/Minúsculas y Encabezados Duplicados
-
-**La coincidencia de encabezados es sensible a mayúsculas/minúsculas y exacta.** Un campo struct `UserName` se mapea a `user_name`, pero encabezados como `User_Name`, `USER_NAME` o `userName` **no** coincidirán:
-
-```go
-type User struct {
-    UserName string  // ✓ coincide con "user_name"
-                     // ✗ NO coincide con "User_Name", "USER_NAME", "userName"
-}
-```
-
-Esto se aplica a todos los formatos de archivo: CSV, TSV, claves LTSV y nombres de columna Parquet/XLSX deben coincidir exactamente.
-
-**Nombres de columna duplicados:** Si un archivo contiene nombres de encabezado duplicados (p.ej., `id,id,name`), se usa la **primera ocurrencia** para la vinculación:
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first" (gana la primera columna "id")
-```
-
-#### Notas Específicas de Formato
-
-**LTSV, Parquet y XLSX** siguen las mismas reglas de coincidencia sensibles a mayúsculas/minúsculas. Las claves/nombres de columna deben coincidir exactamente:
-
-```go
-type Record struct {
-    UserID string                 // espera clave/columna "user_id"
-    Email  string `name:"EMAIL"`  // use etiqueta name para columnas no snake_case
+    UserName string `name:"user"`       // coincide con columna "user" (no "user_name")
+    Email    string `name:"mail_addr"`  // coincide con columna "mail_addr" (no "email")
+    Age      string                     // coincide con columna "age" (snake_case automático)
 }
 ```
 
 Si sus claves LTSV usan guiones (`user-id`) o las columnas Parquet/XLSX usan camelCase (`userId`), use la etiqueta `name` para especificar el nombre exacto de la columna.
+
+Consulte [Antes de usar fileprep](#antes-de-usar-fileprep) para las reglas de sensibilidad a mayúsculas/minúsculas, el comportamiento de encabezados duplicados y el manejo de columnas faltantes.
 
 ### Uso de Memoria
 
@@ -693,6 +733,7 @@ make bench-all
 ## Proyectos Relacionados o de Inspiración
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - Driver SQL para CSV, TSV, LTSV, Parquet, Excel con soporte para gzip, bzip2, xz, zstd.
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - API DataFrame para CSV/TSV/LTSV, Parquet, Excel.
 - [nao1215/csv](https://github.com/nao1215/csv) - Lectura de CSV con validación y DataFrame simple en golang.
 - [go-playground/validator](https://github.com/go-playground/validator) - Validación de Go Struct y Field, incluyendo Cross Field, Cross Struct, Map, Slice y Array diving.
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - go-header-csv es un codificador/decodificador de csv con encabezado.

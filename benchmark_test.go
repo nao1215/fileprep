@@ -475,7 +475,7 @@ func BenchmarkStructTagParsing(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := parseStructType(structType); err != nil {
+		if _, err := parseStructType(structType, false); err != nil {
 			b.Fatal(err)
 		}
 	}

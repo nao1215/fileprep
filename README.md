@@ -23,7 +23,8 @@ While studying machine learning, I realized: "If I extend [nao1215/csv](https://
 - Compression support: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - Name-based column binding: Fields auto-match `snake_case` column names, customizable via `name` tag
 - Struct tag-based preprocessing (`prep` tag): trim, lowercase, uppercase, default values
-- Struct tag-based validation (`validate` tag): required, and more
+- Struct tag-based validation (`validate` tag): required, omitempty, and more
+- Processor options: `WithStrictTagParsing()` for catching tag misconfigurations, `WithValidRowsOnly()` for filtering output
 - Seamless [filesql](https://github.com/nao1215/filesql) integration: Returns `io.Reader` for direct use with filesql
 - Detailed error reporting: Row and column information for each error
 
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Processed 2 rows, 2 valid
 Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
+
+## Before Using fileprep
+
+### JSON/JSONL uses a single "data" column
+
+JSON/JSONL files are parsed into a single column named `"data"`. Each array element (JSON) or line (JSONL) becomes one row containing the raw JSON string.
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+Output is always compact JSONL. If a prep tag breaks the JSON structure, `Process` returns `ErrInvalidJSONAfterPrep`. If all rows end up empty, it returns `ErrEmptyJSONOutput`.
+
+### Column matching is case-sensitive
+
+`UserName` maps to `user_name` via auto snake_case. Headers like `User_Name`, `USER_NAME`, `userName` do **not** match. Use the `name` tag when headers differ:
+
+```go
+type Record struct {
+    UserName string                 // matches "user_name" only
+    Email    string `name:"EMAIL"`  // matches "EMAIL" exactly
+}
+```
+
+### Duplicate headers: first column wins
+
+If a file has `id,id,name`, the first `id` column is used for binding. The second is ignored.
+
+### Missing columns become empty strings
+
+If a column doesn't exist for a struct field, the value is `""`. Add `validate:"required"` to catch this at parse time.
+
+### Excel: only the first sheet is processed
+
+Multi-sheet `.xlsx` files will silently ignore all sheets after the first.
 
 ## Advanced Examples
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // Messy real-world CSV data
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ Multiple tags can be combined: `validate:"required,email"`
 | Tag | Description | Example |
 |-----|-------------|---------|
 | `required` | Field must not be empty | `validate:"required"` |
+| `omitempty` | Skip subsequent validators if value is empty | `validate:"omitempty,email"` |
 | `boolean` | Must be true, false, 0, or 1 | `validate:"boolean"` |
 
 ### Character Type Validators
@@ -510,6 +548,27 @@ Multiple tags can be combined: `validate:"required,email"`
 | `required_with=Field` | Required if field is present | `validate:"required_with=Email"` |
 | `required_without=Field` | Required if field is absent | `validate:"required_without=Phone"` |
 
+**Examples:**
+
+```go
+type User struct {
+    Role    string
+    // Profile is required when Role is "admin", optional for other roles
+    Profile string `validate:"required_if=Role admin"`
+    // Bio is required unless Role is "guest"
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // Name is required when Email is non-empty
+    Name  string `validate:"required_with=Email"`
+    // At least one of Email or BackupEmail must be provided
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## Supported File Formats
 
 | Format | Extension | Compressed Extensions |
@@ -536,10 +595,6 @@ Multiple tags can be combined: `validate:"required,email"`
 | lz4 | `.lz4` | github.com/pierrec/lz4/v4 | Pure Go |
 
 **Note on Parquet compression**: The external compression (`.parquet.gz`, etc.) is for the container file itself. Parquet files may also use internal compression (Snappy, GZIP, LZ4, ZSTD) which is handled transparently by the parquet-go library.
-
-**Note on Excel files**: Only the **first sheet** is processed. Multi-sheet workbooks will have subsequent sheets ignored.
-
-**Note on JSON/JSONL files**: JSON/JSONL data is stored in a single `"data"` column containing raw JSON strings. Each JSON array element or JSONL line becomes one row. JSON input is output as compact JSONL (one JSON value per line). Preprocessing tags operate on the raw JSON string, not individual fields within it. If preprocessing destroys JSON structure, `Process` returns `ErrInvalidJSONAfterPrep`. If all rows become empty after preprocessing, `Process` returns `ErrEmptyJSONOutput`.
 
 ## Integration with filesql
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## Processor Options
+
+`NewProcessor` accepts functional options to customize behavior:
+
+### WithStrictTagParsing
+
+By default, invalid tag arguments (e.g., `eq=abc` where a number is expected) are silently ignored. Enable strict mode to catch these misconfigurations:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// Returns an error if any tag argument is invalid (e.g., "eq=abc", "truncate=xyz")
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+By default, the output includes all rows (valid and invalid). Use `WithValidRowsOnly` to filter the output to only valid rows:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader contains only rows that passed all validations
+// records contains only valid structs
+// result.RowCount includes all rows; result.ValidRowCount has the valid count
+// result.Errors still reports all validation failures
+```
+
+Options can be combined:
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## Design Considerations
 
 ### Name-Based Column Binding
 
-Struct fields are mapped to file columns **by name**, not by position. Field names are automatically converted to `snake_case` to match CSV column headers:
-
-```go
-// File columns: user_name, email_address, phone_number (any order)
-type User struct {
-    UserName     string  // → matches "user_name" column
-    EmailAddress string  // → matches "email_address" column
-    PhoneNumber  string  // → matches "phone_number" column
-}
-```
-
-**Column order doesn't matter** - fields are matched by name, so you can reorder columns in your CSV without changing your struct.
-
-#### Custom Column Names with `name` Tag
-
-Use the `name` tag to override the auto-generated column name:
+Struct fields are mapped to file columns **by name**, not by position. Field names are automatically converted to `snake_case` to match column headers. Column order in the file does not matter.
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → matches "user" column (not "user_name")
-    Email    string `name:"mail_addr"`  // → matches "mail_addr" column (not "email")
-    Age      string                     // → matches "age" column (auto snake_case)
-}
-```
-
-#### Missing Columns Behavior
-
-If a CSV column doesn't exist for a struct field, the field value is treated as an empty string. Validation still runs, so `required` will catch missing columns:
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // Error if "name" column is missing
-    Country string                        // Empty string if "country" column is missing
-}
-```
-
-#### Case Sensitivity and Duplicate Headers
-
-**Header matching is case-sensitive and exact.** A struct field `UserName` maps to `user_name`, but headers like `User_Name`, `USER_NAME`, or `userName` will **not** match:
-
-```go
-type User struct {
-    UserName string  // ✓ matches "user_name"
-                     // ✗ does NOT match "User_Name", "USER_NAME", "userName"
-}
-```
-
-This applies to all file formats: CSV, TSV, LTSV keys, and Parquet/XLSX column names must match exactly.
-
-**Duplicate column names:** If a file contains duplicate header names (e.g., `id,id,name`), the **first occurrence** is used for binding:
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first" (first "id" column wins)
-```
-
-#### Format-Specific Notes
-
-**LTSV, Parquet, and XLSX** follow the same case-sensitive matching rules. Keys/column names must match exactly:
-
-```go
-type Record struct {
-    UserID string                 // expects "user_id" key/column
-    Email  string `name:"EMAIL"`  // use name tag for non-snake_case columns
+    UserName string `name:"user"`       // matches "user" column (not "user_name")
+    Email    string `name:"mail_addr"`  // matches "mail_addr" column (not "email")
+    Age      string                     // matches "age" column (auto snake_case)
 }
 ```
 
 If your LTSV keys use hyphens (`user-id`) or Parquet/XLSX columns use camelCase (`userId`), use the `name` tag to specify the exact column name.
+
+See [Before Using fileprep](#before-using-fileprep) for case-sensitivity rules, duplicate header behavior, and missing column handling.
 
 ### Memory Usage
 

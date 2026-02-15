@@ -1,6 +1,103 @@
 package fileprep
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestOmitemptyValidator(t *testing.T) {
+	t.Parallel()
+
+	t.Run("omitempty with email skips validation on empty value", func(t *testing.T) {
+		t.Parallel()
+		vs := validators{&omitemptyValidator{}, newEmailValidator()}
+		tag, msg := vs.Validate("")
+		if tag != "" || msg != "" {
+			t.Errorf("expected empty value to pass with omitempty, got tag=%q msg=%q", tag, msg)
+		}
+	})
+
+	t.Run("omitempty with email validates non-empty value", func(t *testing.T) {
+		t.Parallel()
+		vs := validators{&omitemptyValidator{}, newEmailValidator()}
+		tag, msg := vs.Validate("invalid")
+		if tag == "" || msg == "" {
+			t.Error("expected validation error for invalid email with omitempty")
+		}
+	})
+
+	t.Run("omitempty with email passes valid non-empty value", func(t *testing.T) {
+		t.Parallel()
+		vs := validators{&omitemptyValidator{}, newEmailValidator()}
+		tag, msg := vs.Validate("user@example.com")
+		if tag != "" || msg != "" {
+			t.Errorf("expected valid email to pass with omitempty, got tag=%q msg=%q", tag, msg)
+		}
+	})
+
+	t.Run("required before omitempty still catches empty value", func(t *testing.T) {
+		t.Parallel()
+		vs := validators{newRequiredValidator(), &omitemptyValidator{}, newEmailValidator()}
+		tag, msg := vs.Validate("")
+		if tag != requiredTagValue {
+			t.Errorf("expected required to catch empty value before omitempty, got tag=%q", tag)
+		}
+		if msg == "" {
+			t.Error("expected error message for required validation failure")
+		}
+	})
+}
+
+func TestOmitempty_Processor(t *testing.T) {
+	t.Parallel()
+
+	type OptionalEmail struct {
+		Name  string `validate:"required"`
+		Email string `validate:"omitempty,email"`
+	}
+
+	t.Run("omitempty passes when email column is empty", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\nJohn,\n"
+		var records []OptionalEmail
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors with omitempty for empty email, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+
+	t.Run("omitempty validates non-empty email", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\nJohn,invalid\n"
+		var records []OptionalEmail
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) == 0 {
+			t.Error("expected validation error for invalid email with omitempty")
+		}
+	})
+
+	t.Run("omitempty passes valid non-empty email", func(t *testing.T) {
+		t.Parallel()
+		csvData := "name,email\nJohn,john@example.com\n"
+		var records []OptionalEmail
+		processor := NewProcessor(FileTypeCSV)
+		_, result, err := processor.Process(strings.NewReader(csvData), &records)
+		if err != nil {
+			t.Fatalf("Process() error = %v", err)
+		}
+		if len(result.Errors) != 0 {
+			t.Errorf("expected 0 errors for valid email, got %d: %v", len(result.Errors), result.Errors)
+		}
+	})
+}
 
 func TestRequiredValidator(t *testing.T) {
 	t.Parallel()
@@ -957,20 +1054,23 @@ func TestDataURIValidator(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name    string
 		input   string
 		wantErr bool
 	}{
-		{"data:text/plain;base64,SGVsbG8=", false},
-		{"data:image/png;base64,iVBORw0KGgo=", false},
-		{"data:text/plain,hello", true},
-		{"invalid", true},
-		{"", true},
+		{"valid text data URI", "data:text/plain;base64,SGVsbG8=", false},
+		{"valid image data URI", "data:image/png;base64,iVBORw0KGgo=", false},
+		{"missing base64 encoding", "data:text/plain,hello", true},
+		{"invalid string", "invalid", true},
+		{"empty string", "", true},
+		// Passes regex but fails base64 decode due to missing padding
+		{"regex match but invalid base64 padding", "data:text/plain;base64,SGVsbG8", true},
 	}
 
 	v := newDataURIValidator()
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			msg := v.Validate(tt.input)
 			hasErr := msg != ""
@@ -1210,22 +1310,39 @@ func TestFQDNValidator(t *testing.T) {
 func TestHostnameValidator(t *testing.T) {
 	t.Parallel()
 
+	// Generate a label exactly 63 chars (max allowed)
+	label63 := strings.Repeat("a", 63)
+	// Generate a label of 64 chars (too long)
+	label64 := strings.Repeat("a", 64)
+	// Generate a hostname exactly 253 chars total (max allowed)
+	// 253 = 63 + 1 + 63 + 1 + 63 + 1 + 61 = 253 (4 labels with dots)
+	hostname253 := label63 + "." + label63 + "." + label63 + "." + strings.Repeat("a", 61)
+	// Generate a hostname of 254 chars (too long)
+	hostname254 := label63 + "." + label63 + "." + label63 + "." + strings.Repeat("a", 62)
+
 	tests := []struct {
+		name    string
 		input   string
 		wantErr bool
 	}{
-		{"example", false},
-		{"Example", false},
-		{"example-host", false},
-		{"1example", true},
-		{"-example", true},
-		{"", true},
+		{"simple hostname", "example", false},
+		{"capitalized hostname", "Example", false},
+		{"hyphenated hostname", "example-host", false},
+		{"starts with digit", "1example", true},
+		{"starts with hyphen", "-example", true},
+		{"empty string", "", true},
+		{"label exactly 63 chars", label63, false},
+		{"label 64 chars too long", label64, true},
+		{"hostname exactly 253 chars", hostname253, false},
+		{"hostname 254 chars too long", hostname254, true},
+		{"leading dot", ".example", true},
+		{"trailing dot", "example.", true},
 	}
 
 	v := newHostnameValidator()
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			msg := v.Validate(tt.input)
 			hasErr := msg != ""
@@ -1433,20 +1550,23 @@ func TestContainsValidator(t *testing.T) {
 func TestContainsAnyValidator(t *testing.T) {
 	t.Parallel()
 
-	v := newContainsAnyValidator([]string{"hello", "world"})
+	v := newContainsAnyValidator("abc")
 
 	tests := []struct {
+		name    string
 		input   string
 		wantErr bool
 	}{
-		{"hello there", false},
-		{"the world", false},
-		{"goodbye", true},
-		{"", true},
+		{"contains 'a' from abc", "apple", false},
+		{"contains 'b' from abc", "banana", false},
+		{"contains 'c' from abc", "cat", false},
+		{"contains multiple chars from abc", "abc", false},
+		{"no matching character", "xyz", true},
+		{"empty value returns error", "", true},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			msg := v.Validate(tt.input)
 			hasErr := msg != ""
@@ -1455,6 +1575,14 @@ func TestContainsAnyValidator(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("empty chars returns error for non-empty value", func(t *testing.T) {
+		t.Parallel()
+		emptyV := newContainsAnyValidator("")
+		if msg := emptyV.Validate("hello"); msg == "" {
+			t.Error("expected error for empty chars, got none")
+		}
+	})
 }
 
 func TestContainsRuneValidator(t *testing.T) {
@@ -1750,7 +1878,7 @@ func TestValidatorNames(t *testing.T) {
 		{"endswith", func() Validator { return newEndsWithValidator("suf") }, "endswith"},
 		{"endsnotwith", func() Validator { return newEndsNotWithValidator("suf") }, "endsnotwith"},
 		{"contains", func() Validator { return newContainsValidator("sub") }, "contains"},
-		{"containsany", func() Validator { return newContainsAnyValidator([]string{"a", "b", "c"}) }, "containsany"},
+		{"containsany", func() Validator { return newContainsAnyValidator("abc") }, "containsany"},
 		{"containsrune", func() Validator { return newContainsRuneValidator('a') }, "containsrune"},
 
 		// Exclusion validators

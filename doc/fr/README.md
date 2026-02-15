@@ -23,8 +23,9 @@ En étudiant l'apprentissage automatique, j'ai réalisé : "Si j'étends [nao121
 - Support de la compression : gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - Liaison de colonnes par nom : Les champs correspondent automatiquement aux noms de colonnes en `snake_case`, personnalisable via la balise `name`
 - Prétraitement basé sur les balises struct (`prep`) : trim, lowercase, uppercase, valeurs par défaut
-- Validation basée sur les balises struct (`validate`) : required et plus
+- Validation basée sur les balises struct (`validate`) : required, omitempty et plus
 - Intégration [filesql](https://github.com/nao1215/filesql) : Retourne `io.Reader` pour une utilisation directe avec filesql
+- Options du processeur : `WithStrictTagParsing()` pour détecter les erreurs de configuration des tags, `WithValidRowsOnly()` pour filtrer la sortie
 - Rapport d'erreurs détaillé : Informations de ligne et colonne pour chaque erreur
 
 ## Installation
@@ -49,7 +50,6 @@ package main
 
 import (
     "fmt"
-    "os"
     "strings"
 
     "github.com/nao1215/fileprep"
@@ -94,6 +94,43 @@ Traité 2 lignes, 2 valides
 Nom : "John Doe", Email : "john@example.com"
 Nom : "Jane Smith", Email : "jane@example.com"
 ```
+
+## Avant d'utiliser fileprep
+
+### JSON/JSONL utilise une seule colonne "data"
+
+Les fichiers JSON/JSONL sont parsés dans une seule colonne nommée `"data"`. Chaque élément du tableau (JSON) ou ligne (JSONL) devient une ligne contenant la chaîne JSON brute.
+
+```go
+type JSONRecord struct {
+    Data string `name:"data" prep:"trim" validate:"required"`
+}
+```
+
+La sortie est toujours du JSONL compact. Si une balise prep casse la structure JSON, `Process` retourne `ErrInvalidJSONAfterPrep`. Si toutes les lignes finissent vides, il retourne `ErrEmptyJSONOutput`.
+
+### La correspondance des colonnes est sensible à la casse
+
+`UserName` est mappé à `user_name` via snake_case automatique. Les en-têtes comme `User_Name`, `USER_NAME`, `userName` ne correspondent **pas**. Utilisez la balise `name` quand les en-têtes diffèrent :
+
+```go
+type Record struct {
+    UserName string                 // correspond uniquement à "user_name"
+    Email    string `name:"EMAIL"`  // correspond exactement à "EMAIL"
+}
+```
+
+### En-têtes dupliqués : la première colonne l'emporte
+
+Si un fichier a `id,id,name`, la première colonne `id` est utilisée pour la liaison. La seconde est ignorée.
+
+### Les colonnes manquantes deviennent des chaînes vides
+
+Si une colonne n'existe pas pour un champ struct, la valeur est `""`. Ajoutez `validate:"required"` pour détecter cela au moment du parsage.
+
+### Excel : seule la première feuille est traitée
+
+Les fichiers `.xlsx` multi-feuilles ignoreront silencieusement toutes les feuilles après la première.
 
 ## Exemples Avancés
 
@@ -144,7 +181,7 @@ type Employee struct {
 func main() {
     // Données CSV désordonnées du monde réel
     csvData := `id,name,email,department,salary,phone,start_date,manager_id,website
-  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,$75,000,555-123-4567,2023-01-15,000001,company.com/john
+  42,  John   Doe  ,JOHN.DOE@COMPANY.COM,engineering,"$75,000",555-123-4567,2023-01-15,000001,company.com/john
 7,Jane Smith,jane@COMPANY.com,  Sales  ,"$120,000",(555) 987-6543,2022-06-01,000002,WWW.LINKEDIN.COM/in/jane
 123,Bob Wilson,bob.wilson@company.com,HR,45000,555.111.2222,2024-03-20,,
 99,Alice Brown,alice@company.com,Marketing,$88500,555-444-3333,2023-09-10,000003,https://alice.dev
@@ -389,6 +426,7 @@ Plusieurs balises peuvent être combinées : `validate:"required,email"`
 | Balise | Description | Exemple |
 |--------|-------------|---------|
 | `required` | Le champ ne doit pas être vide | `validate:"required"` |
+| `omitempty` | Ignorer les validateurs suivants si la valeur est vide | `validate:"omitempty,email"` |
 | `boolean` | Doit être true, false, 0 ou 1 | `validate:"boolean"` |
 
 ### Validateurs de Type de Caractère
@@ -510,6 +548,27 @@ Plusieurs balises peuvent être combinées : `validate:"required,email"`
 | `required_with=Field` | Requis si le champ est présent | `validate:"required_with=Email"` |
 | `required_without=Field` | Requis si le champ est absent | `validate:"required_without=Phone"` |
 
+**Exemples :**
+
+```go
+type User struct {
+    Role    string
+    // Profile est requis quand Role est "admin", optionnel pour les autres rôles
+    Profile string `validate:"required_if=Role admin"`
+    // Bio est requis sauf si Role est "guest"
+    Bio     string `validate:"required_unless=Role guest"`
+}
+
+type Contact struct {
+    Email string
+    Phone string
+    // Name est requis quand Email est non vide
+    Name  string `validate:"required_with=Email"`
+    // Au moins Email ou BackupEmail doit être fourni
+    BackupEmail string `validate:"required_without=Email"`
+}
+```
+
 ## Formats de Fichiers Supportés
 
 | Format | Extension | Compressé |
@@ -536,10 +595,6 @@ Plusieurs balises peuvent être combinées : `validate:"required,email"`
 | lz4 | `.lz4` | Compression extrêmement rapide |
 
 **Note sur la compression Parquet** : La compression externe (`.parquet.gz`, etc.) est pour le fichier conteneur lui-même. Les fichiers Parquet peuvent également utiliser une compression interne (Snappy, GZIP, LZ4, ZSTD) qui est gérée de manière transparente par la bibliothèque parquet-go.
-
-**Note sur les fichiers Excel** : Seule la **première feuille** est traitée. Les feuilles suivantes dans les classeurs multi-feuilles seront ignorées.
-
-**Note sur les fichiers JSON/JSONL** : Les données JSON/JSONL sont stockées dans une seule colonne `"data"` contenant des chaînes JSON brutes. Chaque élément d'un tableau JSON ou ligne JSONL devient une ligne. L'entrée JSON est sortie en JSONL compact (une valeur JSON par ligne). Les balises de prétraitement opèrent sur la chaîne JSON brute, pas sur les champs individuels qu'elle contient. Si le prétraitement détruit la structure JSON, `Process` retourne `ErrInvalidJSONAfterPrep`. Si toutes les lignes deviennent vides après prétraitement, `Process` retourne `ErrEmptyJSONOutput`.
 
 ## Intégration avec filesql
 
@@ -580,78 +635,63 @@ defer db.Close()
 rows, err := db.QueryContext(ctx, "SELECT * FROM my_table WHERE age > 20")
 ```
 
+## Options du Processeur
+
+`NewProcessor` accepte des options fonctionnelles pour personnaliser le comportement :
+
+### WithStrictTagParsing
+
+Par défaut, les arguments de tags invalides (par exemple, `eq=abc` où un nombre est attendu) sont silencieusement ignorés. Activez le mode strict pour détecter ces erreurs de configuration :
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithStrictTagParsing())
+var records []MyRecord
+
+// Retourne une erreur si un argument de tag est invalide (ex : "eq=abc", "truncate=xyz")
+_, _, err := processor.Process(input, &records)
+```
+
+### WithValidRowsOnly
+
+Par défaut, la sortie inclut toutes les lignes (valides et invalides). Utilisez `WithValidRowsOnly` pour filtrer la sortie aux seules lignes valides :
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV, fileprep.WithValidRowsOnly())
+var records []MyRecord
+
+reader, result, err := processor.Process(input, &records)
+// reader contient uniquement les lignes ayant passé toutes les validations
+// records contient uniquement les structs valides
+// result.RowCount inclut toutes les lignes ; result.ValidRowCount a le nombre valide
+// result.Errors rapporte toujours toutes les erreurs de validation
+```
+
+Les options peuvent être combinées :
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV,
+    fileprep.WithStrictTagParsing(),
+    fileprep.WithValidRowsOnly(),
+)
+```
+
 ## Considérations de Conception
 
 ### Liaison de Colonnes par Nom
 
-Les champs struct sont mappés aux colonnes du fichier **par nom**, pas par position. Les noms de champs sont automatiquement convertis en `snake_case` pour correspondre aux en-têtes de colonne CSV :
-
-```go
-// Colonnes du fichier : user_name, email_address, phone_number (n'importe quel ordre)
-type User struct {
-    UserName     string  // → correspond à la colonne "user_name"
-    EmailAddress string  // → correspond à la colonne "email_address"
-    PhoneNumber  string  // → correspond à la colonne "phone_number"
-}
-```
-
-**L'ordre des colonnes n'a pas d'importance** - les champs sont associés par nom, vous pouvez donc réorganiser les colonnes dans votre CSV sans changer votre struct.
-
-#### Noms de Colonnes Personnalisés avec la Balise `name`
-
-Utilisez la balise `name` pour remplacer le nom de colonne généré automatiquement :
+Les champs struct sont mappés aux colonnes du fichier **par nom**, pas par position. Les noms de champs sont automatiquement convertis en `snake_case` pour correspondre aux en-têtes de colonne. L'ordre des colonnes dans le fichier n'a pas d'importance.
 
 ```go
 type User struct {
-    UserName string `name:"user"`       // → correspond à la colonne "user" (pas "user_name")
-    Email    string `name:"mail_addr"`  // → correspond à la colonne "mail_addr" (pas "email")
-    Age      string                     // → correspond à la colonne "age" (snake_case automatique)
-}
-```
-
-#### Comportement des Colonnes Manquantes
-
-Si une colonne CSV n'existe pas pour un champ struct, la valeur du champ est traitée comme une chaîne vide. La validation s'exécute toujours, donc `required` détectera les colonnes manquantes :
-
-```go
-type User struct {
-    Name    string `validate:"required"`  // Erreur si la colonne "name" est manquante
-    Country string                        // Chaîne vide si la colonne "country" est manquante
-}
-```
-
-#### Sensibilité à la Casse et En-têtes en Double
-
-**La correspondance des en-têtes est sensible à la casse et exacte.** Un champ struct `UserName` se mappe à `user_name`, mais des en-têtes comme `User_Name`, `USER_NAME` ou `userName` **ne** correspondront **pas** :
-
-```go
-type User struct {
-    UserName string  // ✓ correspond à "user_name"
-                     // ✗ NE correspond PAS à "User_Name", "USER_NAME", "userName"
-}
-```
-
-Cela s'applique à tous les formats de fichiers : CSV, TSV, clés LTSV et noms de colonnes Parquet/XLSX doivent correspondre exactement.
-
-**Noms de colonnes en double :** Si un fichier contient des noms d'en-tête en double (par ex., `id,id,name`), la **première occurrence** est utilisée pour la liaison :
-
-```csv
-id,id,name
-first,second,John  → struct.ID = "first" (la première colonne "id" gagne)
-```
-
-#### Notes Spécifiques aux Formats
-
-**LTSV, Parquet et XLSX** suivent les mêmes règles de correspondance sensibles à la casse. Les clés/noms de colonnes doivent correspondre exactement :
-
-```go
-type Record struct {
-    UserID string                 // attend la clé/colonne "user_id"
-    Email  string `name:"EMAIL"`  // utilisez la balise name pour les colonnes non snake_case
+    UserName string `name:"user"`       // correspond à la colonne "user" (pas "user_name")
+    Email    string `name:"mail_addr"`  // correspond à la colonne "mail_addr" (pas "email")
+    Age      string                     // correspond à la colonne "age" (snake_case automatique)
 }
 ```
 
 Si vos clés LTSV utilisent des tirets (`user-id`) ou si les colonnes Parquet/XLSX utilisent camelCase (`userId`), utilisez la balise `name` pour spécifier le nom exact de la colonne.
+
+Consultez [Avant d'utiliser fileprep](#avant-dutiliser-fileprep) pour les règles de sensibilité à la casse, le comportement des en-têtes en double et la gestion des colonnes manquantes.
 
 ### Utilisation Mémoire
 
@@ -693,6 +733,7 @@ make bench-all
 ## Projets Liés ou d'Inspiration
 
 - [nao1215/filesql](https://github.com/nao1215/filesql) - Driver SQL pour CSV, TSV, LTSV, Parquet, Excel avec support gzip, bzip2, xz, zstd.
+- [nao1215/fileframe](https://github.com/nao1215/fileframe) - API DataFrame pour CSV/TSV/LTSV, Parquet, Excel.
 - [nao1215/csv](https://github.com/nao1215/csv) - Lecture CSV avec validation et DataFrame simple en golang.
 - [go-playground/validator](https://github.com/go-playground/validator) - Validation de Go Struct et Field, incluant Cross Field, Cross Struct, Map, Slice et Array diving.
 - [shogo82148/go-header-csv](https://github.com/shogo82148/go-header-csv) - go-header-csv est un encodeur/décodeur csv avec en-tête.
