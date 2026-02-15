@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-15
+
 ### Added
 - **JSON/JSONL Format Support**: First-class support for JSON (.json) and JSONL (.jsonl) file formats
   - JSON arrays are parsed into individual rows; each element becomes a row with a single `"data"` column
@@ -19,11 +21,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sentinel Errors for JSON Integrity**:
   - `ErrInvalidJSONAfterPrep`: Hard error when preprocessing (e.g., `truncate`) destroys JSON structure
   - `ErrEmptyJSONOutput`: Hard error when all rows become empty after preprocessing, resulting in 0-line JSONL output
+- **`omitempty` Validator**:
+  - Added `validate:"omitempty,..."` support to skip subsequent validators when a field value is empty
+  - Useful for optional fields such as `omitempty,email`
+- **Processor Options**:
+  - `WithStrictTagParsing()`: Strict mode that returns an error for invalid tag arguments
+  - `WithValidRowsOnly()`: Output and destination slice include only rows that passed all validations
 - **Comprehensive Tests**: Unit and integration tests for JSON/JSONL processing including pretty-printed input, compressed variants, validation, and error paths
+  - Added tests for conditional cross-field validators (`required_if`, `required_unless`, `required_with`, `required_without`)
+  - Added tests for type-conversion paths (`setFieldValue`) across string/int/uint/float/bool
+  - Added end-to-end tests for XLSX and Parquet pipelines
 
 ### Changed
+- **Tag Parser Refactor**:
+  - Refactored `prep` / `validate` tag parsing to a registry-based implementation for easier extension and maintenance
+  - Improved error reporting for invalid tag argument formats in strict mode
+- **Output Behavior**:
+  - Added optional valid-row filtering behavior via `WithValidRowsOnly()` while preserving row/error statistics in `ProcessResult`
 - **Dependency Update**: Updated fileparser from v0.4.0 to v0.5.1 for JSON/JSONL parsing support
-- **Documentation**: Updated all README files (en, ja, es, fr, ko, ru, zh-cn) with JSON/JSONL format support
+- **Documentation**:
+  - Updated README content with clearer pre-use notes and conditional-validator examples
+  - Replaced internal `CLAUDE.md` reference in package docs with pkg.go.dev link
 
 ## [0.4.0] - 2025-12-11
 
