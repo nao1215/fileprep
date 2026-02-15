@@ -13,6 +13,7 @@ type Stream interface {
 	io.Reader
 	// Format returns the actual output format of the stream data.
 	// For CSV/TSV/LTSV input, this matches the input format.
+	// For JSON/JSONL input, this returns JSONL since the output is JSONL-formatted.
 	// For XLSX/Parquet input, this returns CSV since the output is CSV-formatted.
 	Format() fileparser.FileType
 	// OriginalFormat returns the original input file type including compression
@@ -44,6 +45,7 @@ func (s *stream) Read(p []byte) (n int, err error) {
 
 // Format returns the actual output format of the stream data.
 // For CSV/TSV/LTSV input, this matches the input format.
+// For JSON/JSONL input, this returns JSONL since the output is JSONL-formatted.
 // For XLSX/Parquet input, this returns CSV since the output is CSV-formatted.
 func (s *stream) Format() fileparser.FileType {
 	return s.format

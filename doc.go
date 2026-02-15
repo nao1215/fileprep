@@ -1,5 +1,5 @@
 // Package fileprep provides preprocessing and validation for file formats
-// supported by filesql (CSV, TSV, LTSV, Parquet, Excel with gzip, bzip2, xz, zstd support).
+// supported by filesql (CSV, TSV, LTSV, JSON, JSONL, Parquet, Excel with gzip, bzip2, xz, zstd support).
 //
 // fileprep complements filesql by providing data preprocessing before loading
 // into SQLite. It uses struct tags for validation ("validate" tag) and
@@ -37,6 +37,7 @@
 // Format-specific limitations:
 //   - XLSX: Only the first sheet is processed
 //   - LTSV: Maximum line size is 10MB
+//   - JSON/JSONL: Data has a single "data" column containing raw JSON strings
 //
 // # Supported File Formats
 //
@@ -44,6 +45,8 @@
 //   - CSV (.csv)
 //   - TSV (.tsv)
 //   - LTSV (.ltsv)
+//   - JSON (.json)
+//   - JSONL (.jsonl)
 //   - Parquet (.parquet)
 //   - Excel (.xlsx)
 //

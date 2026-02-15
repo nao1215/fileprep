@@ -9,7 +9,7 @@
 
 ![fileprep-logo](../images/fileprep-logo-small.png)
 
-**fileprep** は、CSV、TSV、LTSV、Parquet、Excelなどの構造化データを、軽量なstructタグルールでクリーニング、正規化、バリデーションするためのGoライブラリです。gzip、bzip2、xz、zstd、zlib、snappy、s2、lz4ストリームをシームレスにサポートしています。
+**fileprep** は、CSV、TSV、LTSV、JSON、JSONL、Parquet、Excelなどの構造化データを、軽量なstructタグルールでクリーニング、正規化、バリデーションするためのGoライブラリです。gzip、bzip2、xz、zstd、zlib、snappy、s2、lz4ストリームをシームレスにサポートしています。
 
 ## なぜfileprepなのか？
 
@@ -19,7 +19,7 @@
 
 ## 機能
 
-- 複数ファイル形式対応: CSV, TSV, LTSV, Parquet, Excel (.xlsx)
+- 複数ファイル形式対応: CSV, TSV, LTSV, JSON (.json), JSONL (.jsonl), Parquet, Excel (.xlsx)
 - 圧縮対応: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - 名前ベースのカラムバインディング: フィールドは自動的に `snake_case` カラム名にマッチ、`name` タグでカスタマイズ可能
 - structタグベースの前処理 (`prep` タグ): trim、lowercase、uppercase、デフォルト値など
@@ -517,6 +517,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | CSV | `.csv` | `.csv.gz`, `.csv.bz2`, `.csv.xz`, `.csv.zst`, `.csv.z`, `.csv.snappy`, `.csv.s2`, `.csv.lz4` |
 | TSV | `.tsv` | `.tsv.gz`, `.tsv.bz2`, `.tsv.xz`, `.tsv.zst`, `.tsv.z`, `.tsv.snappy`, `.tsv.s2`, `.tsv.lz4` |
 | LTSV | `.ltsv` | `.ltsv.gz`, `.ltsv.bz2`, `.ltsv.xz`, `.ltsv.zst`, `.ltsv.z`, `.ltsv.snappy`, `.ltsv.s2`, `.ltsv.lz4` |
+| JSON | `.json` | `.json.gz`, `.json.bz2`, `.json.xz`, `.json.zst`, `.json.z`, `.json.snappy`, `.json.s2`, `.json.lz4` |
+| JSONL | `.jsonl` | `.jsonl.gz`, `.jsonl.bz2`, `.jsonl.xz`, `.jsonl.zst`, `.jsonl.z`, `.jsonl.snappy`, `.jsonl.s2`, `.jsonl.lz4` |
 | Excel | `.xlsx` | `.xlsx.gz`, `.xlsx.bz2`, `.xlsx.xz`, `.xlsx.zst`, `.xlsx.z`, `.xlsx.snappy`, `.xlsx.s2`, `.xlsx.lz4` |
 | Parquet | `.parquet` | `.parquet.gz`, `.parquet.bz2`, `.parquet.xz`, `.parquet.zst`, `.parquet.z`, `.parquet.snappy`, `.parquet.s2`, `.parquet.lz4` |
 
@@ -536,6 +538,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 **Parquet圧縮についての注意**: 外部圧縮（`.parquet.gz`など）はコンテナファイル自体の圧縮です。Parquetファイルは内部圧縮（Snappy、GZIP、LZ4、ZSTD）も使用でき、parquet-goライブラリによって透過的に処理されます。
 
 **Excelファイルについての注意**: **最初のシート**のみが処理されます。複数シートのワークブックでは、後続のシートは無視されます。
+
+**JSON/JSONLファイルについての注意**: JSON/JSONLデータは生のJSON文字列を含む単一の `"data"` カラムに格納されます。JSON配列の各要素やJSONLの各行が1行になります。JSON入力はコンパクトなJSONL（1行に1つのJSON値）として出力されます。前処理タグは生のJSON文字列に対して動作し、内部の個別フィールドには作用しません。前処理がJSON構造を破壊した場合、`Process` は `ErrInvalidJSONAfterPrep` を返します。前処理後にすべての行が空になった場合、`Process` は `ErrEmptyJSONOutput` を返します。
 
 ## filesqlとの連携
 

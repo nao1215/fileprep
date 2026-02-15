@@ -21,6 +21,10 @@ func TestStream_Format(t *testing.T) {
 		{"TSV bzip2 returns TSV", fileparser.TSV, fileparser.TSVBZ2, fileparser.TSV},
 		{"XLSX outputs as CSV", fileparser.CSV, fileparser.XLSXZSTD, fileparser.CSV},
 		{"Parquet outputs as CSV", fileparser.CSV, fileparser.Parquet, fileparser.CSV},
+		{"JSON outputs as JSONL", fileparser.JSONL, fileparser.JSON, fileparser.JSONL},
+		{"JSONL", fileparser.JSONL, fileparser.JSONL, fileparser.JSONL},
+		{"JSON gzip outputs as JSONL", fileparser.JSONL, fileparser.JSONGZ, fileparser.JSONL},
+		{"JSONL zstd outputs as JSONL", fileparser.JSONL, fileparser.JSONLZSTD, fileparser.JSONL},
 	}
 
 	for _, tt := range tests {

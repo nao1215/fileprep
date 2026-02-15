@@ -1,6 +1,7 @@
 package fileprep
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -790,5 +791,229 @@ john,JOHN@EXAMPLE.COM`
 	}
 	if !strings.Contains(outputStr, "john@example.com") {
 		t.Error("expected lowercase email in output")
+	}
+}
+
+// verifyJSONLOutput reads all output from the reader and verifies each non-empty line is valid JSON.
+func verifyJSONLOutput(t *testing.T, reader io.Reader) {
+	t.Helper()
+
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	// Filter out empty lines (writeJSONL skips empty records)
+	var nonEmpty []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty = append(nonEmpty, line)
+		}
+	}
+
+	if len(nonEmpty) == 0 {
+		t.Error("JSONL output has no non-empty lines")
+		return
+	}
+
+	for i, line := range nonEmpty {
+		if !json.Valid([]byte(line)) {
+			t.Errorf("JSONL output line %d is not valid JSON: %q", i+1, line)
+		}
+	}
+}
+
+// TestIntegration_JSONProcessing tests JSON file processing with prep tags
+func TestIntegration_JSONProcessing(t *testing.T) {
+	t.Parallel()
+
+	type JSONRecord struct {
+		Data string `name:"data" prep:"trim" validate:"required"`
+	}
+
+	file, err := os.Open(filepath.Join("testdata", "sample.json"))
+	if err != nil {
+		t.Fatalf("os.Open() error = %v", err)
+	}
+	defer file.Close()
+
+	var records []JSONRecord
+
+	processor := NewProcessor(fileparser.JSON)
+	pipeReader, result, err := processor.Process(file, &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if result.OriginalFormat != fileparser.JSON {
+		t.Errorf("OriginalFormat = %v, want %v", result.OriginalFormat, fileparser.JSON)
+	}
+
+	if result.RowCount != 4 {
+		t.Errorf("RowCount = %d, want 4", result.RowCount)
+	}
+
+	if len(records) != 4 {
+		t.Errorf("len(records) = %d, want 4", len(records))
+	}
+
+	// Verify JSONL output is re-parseable
+	verifyJSONLOutput(t, pipeReader)
+}
+
+// TestIntegration_JSONLProcessing tests JSONL file processing with prep tags
+func TestIntegration_JSONLProcessing(t *testing.T) {
+	t.Parallel()
+
+	type JSONRecord struct {
+		Data string `name:"data" prep:"trim" validate:"required"`
+	}
+
+	file, err := os.Open(filepath.Join("testdata", "sample.jsonl"))
+	if err != nil {
+		t.Fatalf("os.Open() error = %v", err)
+	}
+	defer file.Close()
+
+	var records []JSONRecord
+
+	processor := NewProcessor(fileparser.JSONL)
+	pipeReader, result, err := processor.Process(file, &records)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+
+	if result.OriginalFormat != fileparser.JSONL {
+		t.Errorf("OriginalFormat = %v, want %v", result.OriginalFormat, fileparser.JSONL)
+	}
+
+	if result.RowCount != 4 {
+		t.Errorf("RowCount = %d, want 4", result.RowCount)
+	}
+
+	if len(records) != 4 {
+		t.Errorf("len(records) = %d, want 4", len(records))
+	}
+
+	// Verify JSONL output is re-parseable
+	verifyJSONLOutput(t, pipeReader)
+}
+
+// TestIntegration_CompressedJSON tests processing compressed JSON files
+func TestIntegration_CompressedJSON(t *testing.T) {
+	t.Parallel()
+
+	type JSONRecord struct {
+		Data string `name:"data" prep:"trim" validate:"required"`
+	}
+
+	tests := []struct {
+		name     string
+		filePath string
+		fileType fileparser.FileType
+	}{
+		{"gzip JSON", filepath.Join("testdata", "sample.json.gz"), fileparser.JSONGZ},
+		{"bzip2 JSON", filepath.Join("testdata", "sample.json.bz2"), fileparser.JSONBZ2},
+		{"xz JSON", filepath.Join("testdata", "sample.json.xz"), fileparser.JSONXZ},
+		{"zstd JSON", filepath.Join("testdata", "sample.json.zst"), fileparser.JSONZSTD},
+		{"zlib JSON", filepath.Join("testdata", "sample.json.z"), fileparser.JSONZLIB},
+		{"snappy JSON", filepath.Join("testdata", "sample.json.snappy"), fileparser.JSONSNAPPY},
+		{"s2 JSON", filepath.Join("testdata", "sample.json.s2"), fileparser.JSONS2},
+		{"lz4 JSON", filepath.Join("testdata", "sample.json.lz4"), fileparser.JSONLZ4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			file, err := os.Open(tt.filePath)
+			if err != nil {
+				t.Fatalf("os.Open() error = %v", err)
+			}
+			defer file.Close()
+
+			var records []JSONRecord
+
+			processor := NewProcessor(tt.fileType)
+			pipeReader, result, err := processor.Process(file, &records)
+			if err != nil {
+				t.Fatalf("Process() error = %v", err)
+			}
+
+			if result.OriginalFormat != tt.fileType {
+				t.Errorf("OriginalFormat = %v, want %v", result.OriginalFormat, tt.fileType)
+			}
+
+			if len(records) == 0 {
+				t.Error("expected at least one record")
+			}
+
+			if result.RowCount != 4 {
+				t.Errorf("RowCount = %d, want 4", result.RowCount)
+			}
+
+			// Verify JSONL output is re-parseable
+			verifyJSONLOutput(t, pipeReader)
+		})
+	}
+}
+
+// TestIntegration_CompressedJSONL tests processing compressed JSONL files
+func TestIntegration_CompressedJSONL(t *testing.T) {
+	t.Parallel()
+
+	type JSONRecord struct {
+		Data string `name:"data" prep:"trim" validate:"required"`
+	}
+
+	tests := []struct {
+		name     string
+		filePath string
+		fileType fileparser.FileType
+	}{
+		{"gzip JSONL", filepath.Join("testdata", "sample.jsonl.gz"), fileparser.JSONLGZ},
+		{"bzip2 JSONL", filepath.Join("testdata", "sample.jsonl.bz2"), fileparser.JSONLBZ2},
+		{"xz JSONL", filepath.Join("testdata", "sample.jsonl.xz"), fileparser.JSONLXZ},
+		{"zstd JSONL", filepath.Join("testdata", "sample.jsonl.zst"), fileparser.JSONLZSTD},
+		{"zlib JSONL", filepath.Join("testdata", "sample.jsonl.z"), fileparser.JSONLZLIB},
+		{"snappy JSONL", filepath.Join("testdata", "sample.jsonl.snappy"), fileparser.JSONLSNAPPY},
+		{"s2 JSONL", filepath.Join("testdata", "sample.jsonl.s2"), fileparser.JSONLS2},
+		{"lz4 JSONL", filepath.Join("testdata", "sample.jsonl.lz4"), fileparser.JSONLLZ4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			file, err := os.Open(tt.filePath)
+			if err != nil {
+				t.Fatalf("os.Open() error = %v", err)
+			}
+			defer file.Close()
+
+			var records []JSONRecord
+
+			processor := NewProcessor(tt.fileType)
+			pipeReader, result, err := processor.Process(file, &records)
+			if err != nil {
+				t.Fatalf("Process() error = %v", err)
+			}
+
+			if result.OriginalFormat != tt.fileType {
+				t.Errorf("OriginalFormat = %v, want %v", result.OriginalFormat, tt.fileType)
+			}
+
+			if len(records) == 0 {
+				t.Error("expected at least one record")
+			}
+
+			if result.RowCount != 4 {
+				t.Errorf("RowCount = %d, want 4", result.RowCount)
+			}
+
+			// Verify JSONL output is re-parseable
+			verifyJSONLOutput(t, pipeReader)
+		})
 	}
 }

@@ -9,7 +9,7 @@
 
 ![fileprep-logo](../images/fileprep-logo-small.png)
 
-**fileprep** est une bibliothèque Go pour nettoyer, normaliser et valider des données structurées (CSV, TSV, LTSV, Parquet et Excel) via des règles légères basées sur les balises struct, avec un support transparent des flux gzip, bzip2, xz, zstd, zlib, snappy, s2 et lz4.
+**fileprep** est une bibliothèque Go pour nettoyer, normaliser et valider des données structurées (CSV, TSV, LTSV, JSON, JSONL, Parquet et Excel) via des règles légères basées sur les balises struct, avec un support transparent des flux gzip, bzip2, xz, zstd, zlib, snappy, s2 et lz4.
 
 ## Pourquoi fileprep ?
 
@@ -19,7 +19,7 @@ En étudiant l'apprentissage automatique, j'ai réalisé : "Si j'étends [nao121
 
 ## Fonctionnalités
 
-- Support multi-formats : CSV, TSV, LTSV, Parquet, Excel (.xlsx)
+- Support multi-formats : CSV, TSV, LTSV, JSON (.json), JSONL (.jsonl), Parquet, Excel (.xlsx)
 - Support de la compression : gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - Liaison de colonnes par nom : Les champs correspondent automatiquement aux noms de colonnes en `snake_case`, personnalisable via la balise `name`
 - Prétraitement basé sur les balises struct (`prep`) : trim, lowercase, uppercase, valeurs par défaut
@@ -517,6 +517,8 @@ Plusieurs balises peuvent être combinées : `validate:"required,email"`
 | CSV | `.csv` | `.csv.gz`, `.csv.bz2`, `.csv.xz`, `.csv.zst`, `.csv.z`, `.csv.snappy`, `.csv.s2`, `.csv.lz4` |
 | TSV | `.tsv` | `.tsv.gz`, `.tsv.bz2`, `.tsv.xz`, `.tsv.zst`, `.tsv.z`, `.tsv.snappy`, `.tsv.s2`, `.tsv.lz4` |
 | LTSV | `.ltsv` | `.ltsv.gz`, `.ltsv.bz2`, `.ltsv.xz`, `.ltsv.zst`, `.ltsv.z`, `.ltsv.snappy`, `.ltsv.s2`, `.ltsv.lz4` |
+| JSON | `.json` | `.json.gz`, `.json.bz2`, `.json.xz`, `.json.zst`, `.json.z`, `.json.snappy`, `.json.s2`, `.json.lz4` |
+| JSONL | `.jsonl` | `.jsonl.gz`, `.jsonl.bz2`, `.jsonl.xz`, `.jsonl.zst`, `.jsonl.z`, `.jsonl.snappy`, `.jsonl.s2`, `.jsonl.lz4` |
 | Excel | `.xlsx` | `.xlsx.gz`, `.xlsx.bz2`, `.xlsx.xz`, `.xlsx.zst`, `.xlsx.z`, `.xlsx.snappy`, `.xlsx.s2`, `.xlsx.lz4` |
 | Parquet | `.parquet` | `.parquet.gz`, `.parquet.bz2`, `.parquet.xz`, `.parquet.zst`, `.parquet.z`, `.parquet.snappy`, `.parquet.s2`, `.parquet.lz4` |
 
@@ -536,6 +538,8 @@ Plusieurs balises peuvent être combinées : `validate:"required,email"`
 **Note sur la compression Parquet** : La compression externe (`.parquet.gz`, etc.) est pour le fichier conteneur lui-même. Les fichiers Parquet peuvent également utiliser une compression interne (Snappy, GZIP, LZ4, ZSTD) qui est gérée de manière transparente par la bibliothèque parquet-go.
 
 **Note sur les fichiers Excel** : Seule la **première feuille** est traitée. Les feuilles suivantes dans les classeurs multi-feuilles seront ignorées.
+
+**Note sur les fichiers JSON/JSONL** : Les données JSON/JSONL sont stockées dans une seule colonne `"data"` contenant des chaînes JSON brutes. Chaque élément d'un tableau JSON ou ligne JSONL devient une ligne. L'entrée JSON est sortie en JSONL compact (une valeur JSON par ligne). Les balises de prétraitement opèrent sur la chaîne JSON brute, pas sur les champs individuels qu'elle contient. Si le prétraitement détruit la structure JSON, `Process` retourne `ErrInvalidJSONAfterPrep`. Si toutes les lignes deviennent vides après prétraitement, `Process` retourne `ErrEmptyJSONOutput`.
 
 ## Intégration avec filesql
 

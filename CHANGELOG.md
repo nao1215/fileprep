@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **JSON/JSONL Format Support**: First-class support for JSON (.json) and JSONL (.jsonl) file formats
+  - JSON arrays are parsed into individual rows; each element becomes a row with a single `"data"` column
+  - JSONL files are parsed line-by-line; each line becomes a row with a single `"data"` column
+  - JSON/JSONL output is always compact JSONL (one JSON value per line, no header)
+  - Pretty-printed JSON input is automatically compacted via `json.Compact`
+- **18 New FileType Constants**: 2 base types + 16 compressed variants
+  - JSON: `FileTypeJSON`, `FileTypeJSONGZ`, `FileTypeJSONBZ2`, `FileTypeJSONXZ`, `FileTypeJSONZSTD`, `FileTypeJSONZLIB`, `FileTypeJSONSNAPPY`, `FileTypeJSONS2`, `FileTypeJSONLZ4`
+  - JSONL: `FileTypeJSONL`, `FileTypeJSONLGZ`, `FileTypeJSONLBZ2`, `FileTypeJSONLXZ`, `FileTypeJSONLZSTD`, `FileTypeJSONLZLIB`, `FileTypeJSONLSNAPPY`, `FileTypeJSONLS2`, `FileTypeJSONLLZ4`
+- **Sentinel Errors for JSON Integrity**:
+  - `ErrInvalidJSONAfterPrep`: Hard error when preprocessing (e.g., `truncate`) destroys JSON structure
+  - `ErrEmptyJSONOutput`: Hard error when all rows become empty after preprocessing, resulting in 0-line JSONL output
+- **Comprehensive Tests**: Unit and integration tests for JSON/JSONL processing including pretty-printed input, compressed variants, validation, and error paths
+
+### Changed
+- **Dependency Update**: Updated fileparser from v0.4.0 to v0.5.1 for JSON/JSONL parsing support
+- **Documentation**: Updated all README files (en, ja, es, fr, ko, ru, zh-cn) with JSON/JSONL format support
+
 ## [0.4.0] - 2025-12-11
 
 ### Added

@@ -17,6 +17,14 @@ var (
 	ErrEmptyFile = errors.New("file is empty")
 	// ErrInvalidTagFormat is returned when the tag format is invalid
 	ErrInvalidTagFormat = errors.New("invalid tag format")
+	// ErrInvalidJSONAfterPrep is returned when preprocessing destroys JSON structure
+	// in the "data" column of a JSON/JSONL file. This is a hard error because
+	// invalid JSON lines in JSONL output cause downstream parsers to fail.
+	ErrInvalidJSONAfterPrep = errors.New("preprocessing produced invalid JSON")
+	// ErrEmptyJSONOutput is returned when all JSON/JSONL rows are empty or invalid
+	// after preprocessing, resulting in no output lines. An empty JSONL output is
+	// unparseable by downstream consumers.
+	ErrEmptyJSONOutput = errors.New("JSON/JSONL output has no valid rows after preprocessing")
 )
 
 // ValidationError represents a validation error with row and column information.

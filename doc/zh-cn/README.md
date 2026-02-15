@@ -9,7 +9,7 @@
 
 ![fileprep-logo](../images/fileprep-logo-small.png)
 
-**fileprep** 是一个用于清理、规范化和验证结构化数据（CSV、TSV、LTSV、Parquet 和 Excel）的 Go 库，通过轻量级的 struct 标签规则实现，无缝支持 gzip、bzip2、xz、zstd、zlib、snappy、s2 和 lz4 压缩流。
+**fileprep** 是一个用于清理、规范化和验证结构化数据（CSV、TSV、LTSV、JSON、JSONL、Parquet 和 Excel）的 Go 库，通过轻量级的 struct 标签规则实现，无缝支持 gzip、bzip2、xz、zstd、zlib、snappy、s2 和 lz4 压缩流。
 
 ## 为什么选择 fileprep？
 
@@ -19,7 +19,7 @@
 
 ## 功能
 
-- 多文件格式支持：CSV、TSV、LTSV、Parquet、Excel (.xlsx)
+- 多文件格式支持：CSV、TSV、LTSV、JSON (.json)、JSONL (.jsonl)、Parquet、Excel (.xlsx)
 - 压缩支持：gzip (.gz)、bzip2 (.bz2)、xz (.xz)、zstd (.zst)、zlib (.z)、snappy (.snappy)、s2 (.s2)、lz4 (.lz4)
 - 基于名称的列绑定：字段自动匹配 `snake_case` 列名，可通过 `name` 标签自定义
 - 基于 struct 标签的预处理（`prep` 标签）：trim、lowercase、uppercase、默认值等
@@ -517,6 +517,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | CSV | `.csv` | `.csv.gz`、`.csv.bz2`、`.csv.xz`、`.csv.zst`、`.csv.z`、`.csv.snappy`、`.csv.s2`、`.csv.lz4` |
 | TSV | `.tsv` | `.tsv.gz`、`.tsv.bz2`、`.tsv.xz`、`.tsv.zst`、`.tsv.z`、`.tsv.snappy`、`.tsv.s2`、`.tsv.lz4` |
 | LTSV | `.ltsv` | `.ltsv.gz`、`.ltsv.bz2`、`.ltsv.xz`、`.ltsv.zst`、`.ltsv.z`、`.ltsv.snappy`、`.ltsv.s2`、`.ltsv.lz4` |
+| JSON | `.json` | `.json.gz`, `.json.bz2`, `.json.xz`, `.json.zst`, `.json.z`, `.json.snappy`, `.json.s2`, `.json.lz4` |
+| JSONL | `.jsonl` | `.jsonl.gz`, `.jsonl.bz2`, `.jsonl.xz`, `.jsonl.zst`, `.jsonl.z`, `.jsonl.snappy`, `.jsonl.s2`, `.jsonl.lz4` |
 | Excel | `.xlsx` | `.xlsx.gz`、`.xlsx.bz2`、`.xlsx.xz`、`.xlsx.zst`、`.xlsx.z`、`.xlsx.snappy`、`.xlsx.s2`、`.xlsx.lz4` |
 | Parquet | `.parquet` | `.parquet.gz`、`.parquet.bz2`、`.parquet.xz`、`.parquet.zst`、`.parquet.z`、`.parquet.snappy`、`.parquet.s2`、`.parquet.lz4` |
 
@@ -536,6 +538,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 **Parquet 压缩说明**：外部压缩（`.parquet.gz` 等）是针对容器文件本身的。Parquet 文件还可能使用内部压缩（Snappy、GZIP、LZ4、ZSTD），这由 parquet-go 库透明处理。
 
 **Excel 文件说明**：只处理**第一个工作表**。多工作表工作簿中的后续工作表将被忽略。
+
+**JSON/JSONL 文件说明**：JSON/JSONL 数据存储在包含原始 JSON 字符串的单个 `"data"` 列中。JSON 数组的每个元素或 JSONL 的每一行成为一行。JSON 输入以紧凑 JSONL（每行一个 JSON 值）形式输出。预处理标签作用于原始 JSON 字符串，而非其中的单个字段。如果预处理破坏了 JSON 结构，`Process` 返回 `ErrInvalidJSONAfterPrep`。如果预处理后所有行都变为空，`Process` 返回 `ErrEmptyJSONOutput`。
 
 ## 与 filesql 集成
 

@@ -62,6 +62,30 @@ const (
 	FileTypeParquetLZ4 = fileparser.ParquetLZ4
 	FileTypeXLSXLZ4    = fileparser.XLSXLZ4
 
+	// JSON/JSONL file types (v0.5.0+)
+	FileTypeJSON  = fileparser.JSON
+	FileTypeJSONL = fileparser.JSONL
+
+	// JSON compression formats (v0.5.0+)
+	FileTypeJSONGZ     = fileparser.JSONGZ
+	FileTypeJSONBZ2    = fileparser.JSONBZ2
+	FileTypeJSONXZ     = fileparser.JSONXZ
+	FileTypeJSONZSTD   = fileparser.JSONZSTD
+	FileTypeJSONZLIB   = fileparser.JSONZLIB
+	FileTypeJSONSNAPPY = fileparser.JSONSNAPPY
+	FileTypeJSONS2     = fileparser.JSONS2
+	FileTypeJSONLZ4    = fileparser.JSONLZ4
+
+	// JSONL compression formats (v0.5.0+)
+	FileTypeJSONLGZ     = fileparser.JSONLGZ
+	FileTypeJSONLBZ2    = fileparser.JSONLBZ2
+	FileTypeJSONLXZ     = fileparser.JSONLXZ
+	FileTypeJSONLZSTD   = fileparser.JSONLZSTD
+	FileTypeJSONLZLIB   = fileparser.JSONLZLIB
+	FileTypeJSONLSNAPPY = fileparser.JSONLSNAPPY
+	FileTypeJSONLS2     = fileparser.JSONLS2
+	FileTypeJSONLLZ4    = fileparser.JSONLLZ4
+
 	FileTypeUnsupported = fileparser.Unsupported
 )
 
