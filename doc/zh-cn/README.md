@@ -517,8 +517,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | CSV | `.csv` | `.csv.gz`、`.csv.bz2`、`.csv.xz`、`.csv.zst`、`.csv.z`、`.csv.snappy`、`.csv.s2`、`.csv.lz4` |
 | TSV | `.tsv` | `.tsv.gz`、`.tsv.bz2`、`.tsv.xz`、`.tsv.zst`、`.tsv.z`、`.tsv.snappy`、`.tsv.s2`、`.tsv.lz4` |
 | LTSV | `.ltsv` | `.ltsv.gz`、`.ltsv.bz2`、`.ltsv.xz`、`.ltsv.zst`、`.ltsv.z`、`.ltsv.snappy`、`.ltsv.s2`、`.ltsv.lz4` |
-| JSON | `.json` | `.json.gz`, `.json.bz2`, `.json.xz`, `.json.zst`, `.json.z`, `.json.snappy`, `.json.s2`, `.json.lz4` |
-| JSONL | `.jsonl` | `.jsonl.gz`, `.jsonl.bz2`, `.jsonl.xz`, `.jsonl.zst`, `.jsonl.z`, `.jsonl.snappy`, `.jsonl.s2`, `.jsonl.lz4` |
+| JSON | `.json` | `.json.gz`、`.json.bz2`、`.json.xz`、`.json.zst`、`.json.z`、`.json.snappy`、`.json.s2`、`.json.lz4` |
+| JSONL | `.jsonl` | `.jsonl.gz`、`.jsonl.bz2`、`.jsonl.xz`、`.jsonl.zst`、`.jsonl.z`、`.jsonl.snappy`、`.jsonl.s2`、`.jsonl.lz4` |
 | Excel | `.xlsx` | `.xlsx.gz`、`.xlsx.bz2`、`.xlsx.xz`、`.xlsx.zst`、`.xlsx.z`、`.xlsx.snappy`、`.xlsx.s2`、`.xlsx.lz4` |
 | Parquet | `.parquet` | `.parquet.gz`、`.parquet.bz2`、`.parquet.xz`、`.parquet.zst`、`.parquet.z`、`.parquet.snappy`、`.parquet.s2`、`.parquet.lz4` |
 

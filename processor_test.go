@@ -1014,8 +1014,11 @@ func TestProcessor_JSON_PrettyPrintedGzip(t *testing.T) {
 		if !json.Valid([]byte(line)) {
 			t.Errorf("line %d is not valid JSON: %q", i+1, line)
 		}
-		if strings.Contains(line, "\n") {
-			t.Errorf("line %d contains newline (not compacted): %q", i+1, line)
+		if line != strings.TrimSpace(line) {
+			t.Errorf("line %d has leading/trailing whitespace: %q", i+1, line)
+		}
+		if strings.Contains(line, "\t") {
+			t.Errorf("line %d contains tab character: %q", i+1, line)
 		}
 	}
 }

@@ -64,7 +64,12 @@ func parseStructType(structType reflect.Type) (*structInfo, error) {
 
 		// Parse validate tag
 		if validateTag := field.Tag.Get(validateTagName); validateTag != "" {
-			info.Validators, info.CrossFieldValidators = parseValidateTag(validateTag)
+			vals, crossVals, err := parseValidateTag(validateTag)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", field.Name, err)
+			}
+			info.Validators = vals
+			info.CrossFieldValidators = crossVals
 		}
 
 		fields = append(fields, info)
@@ -239,10 +244,11 @@ func parseRequiredIfParams(value string) (string, string) {
 	return field, expectedVal
 }
 
-// parseValidateTag parses the validate tag string and returns validators and cross-field validators
-func parseValidateTag(tag string) (validators, crossFieldValidators) {
+// parseValidateTag parses the validate tag string and returns validators and cross-field validators.
+// It returns an error if an unknown validate tag is encountered.
+func parseValidateTag(tag string) (validators, crossFieldValidators, error) {
 	if tag == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	parts := strings.Split(tag, ",")
@@ -546,11 +552,11 @@ func parseValidateTag(tag string) (validators, crossFieldValidators) {
 			}
 
 		default:
-			// Ignore unknown validators to allow gradual implementation
+			return nil, nil, fmt.Errorf("%w: unknown validate tag %q", ErrInvalidTagFormat, part)
 		}
 	}
 
-	return vals, crossVals
+	return vals, crossVals, nil
 }
 
 // splitTagKeyValue splits a tag part into key and value

@@ -1,7 +1,9 @@
 package fileprep
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -44,18 +46,23 @@ func TestParseValidateTag(t *testing.T) {
 		name    string
 		tag     string
 		wantLen int
+		wantErr bool
 	}{
-		{"empty tag", "", 0},
-		{"required", "required", 1},
-		{"unknown tag ignored", "unknown", 0}, // Unknown tags are ignored for now
-		{"spaces in tag", " required ", 1},
+		{"empty tag", "", 0, false},
+		{"required", "required", 1, false},
+		{"unknown tag returns error", "unknown", 0, true},
+		{"spaces in tag", " required ", 1, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			vals, _ := parseValidateTag(tt.tag)
-			if len(vals) != tt.wantLen {
+			vals, _, err := parseValidateTag(tt.tag)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseValidateTag() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && len(vals) != tt.wantLen {
 				t.Errorf("parseValidateTag() len = %d, want %d", len(vals), tt.wantLen)
 			}
 		})
@@ -243,6 +250,53 @@ func TestParseStructType(t *testing.T) {
 		if len(field.Preprocessors) != 2 {
 			t.Errorf("Field[1].Preprocessors len = %d, want 2", len(field.Preprocessors))
 		}
+	}
+}
+
+// TestParseStructTypeUnknownValidateTag tests that unknown validate tags propagate
+// through parseStructType with the field name included in the error message.
+func TestParseStructTypeUnknownValidateTag(t *testing.T) {
+	t.Parallel()
+
+	type BadValidate struct {
+		Email string `validate:"unknown_tag"`
+	}
+
+	structType := reflect.TypeOf(BadValidate{})
+	_, err := parseStructType(structType)
+	if err == nil {
+		t.Fatal("parseStructType() expected error for unknown validate tag, got nil")
+	}
+	if !errors.Is(err, ErrInvalidTagFormat) {
+		t.Errorf("parseStructType() error should wrap ErrInvalidTagFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Email") {
+		t.Errorf("parseStructType() error should contain field name \"Email\", got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "unknown_tag") {
+		t.Errorf("parseStructType() error should contain tag name \"unknown_tag\", got %q", err.Error())
+	}
+}
+
+// TestParseStructTypeUnknownPrepTag tests that unknown prep tags propagate
+// through parseStructType with the field name included in the error message.
+func TestParseStructTypeUnknownPrepTag(t *testing.T) {
+	t.Parallel()
+
+	type BadPrep struct {
+		Name string `prep:"bad_preprocessor"`
+	}
+
+	structType := reflect.TypeOf(BadPrep{})
+	_, err := parseStructType(structType)
+	if err == nil {
+		t.Fatal("parseStructType() expected error for unknown prep tag, got nil")
+	}
+	if !errors.Is(err, ErrInvalidTagFormat) {
+		t.Errorf("parseStructType() error should wrap ErrInvalidTagFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Name") {
+		t.Errorf("parseStructType() error should contain field name \"Name\", got %q", err.Error())
 	}
 }
 

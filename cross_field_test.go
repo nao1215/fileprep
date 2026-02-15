@@ -447,7 +447,10 @@ func TestCrossFieldValidation_Integration(t *testing.T) {
 	// Test parsing cross-field validators
 	t.Run("parse cross-field validators", func(t *testing.T) {
 		t.Parallel()
-		vals, crossVals := parseValidateTag("gtfield=MaxPrice")
+		vals, crossVals, err := parseValidateTag("gtfield=MaxPrice")
+		if err != nil {
+			t.Fatalf("parseValidateTag() error = %v", err)
+		}
 		if len(vals) != 0 {
 			t.Errorf("expected 0 validators, got %d", len(vals))
 		}
@@ -467,7 +470,10 @@ func TestCrossFieldValidation_Integration(t *testing.T) {
 	// Test multiple cross-field validators
 	t.Run("parse multiple cross-field validators", func(t *testing.T) {
 		t.Parallel()
-		vals, crossVals := parseValidateTag("required,eqfield=Other,nefield=Another")
+		vals, crossVals, err := parseValidateTag("required,eqfield=Other,nefield=Another")
+		if err != nil {
+			t.Fatalf("parseValidateTag() error = %v", err)
+		}
 		if len(vals) != 1 {
 			t.Errorf("expected 1 validator, got %d", len(vals))
 		}
@@ -494,7 +500,11 @@ func TestCrossFieldValidation_Integration(t *testing.T) {
 		}
 
 		for _, tc := range testCases {
-			_, crossVals := parseValidateTag(tc.tag)
+			_, crossVals, err := parseValidateTag(tc.tag)
+			if err != nil {
+				t.Errorf("tag %q: parseValidateTag() error = %v", tc.tag, err)
+				continue
+			}
 			if len(crossVals) != 1 {
 				t.Errorf("tag %q: expected 1 cross-field validator, got %d", tc.tag, len(crossVals))
 				continue
