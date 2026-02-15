@@ -235,6 +235,10 @@ func Example_detectFileType() {
 		"logs.tsv.bz2",
 		"events.parquet",
 		"access.ltsv.zst",
+		"config.json",
+		"config.json.gz",
+		"events.jsonl",
+		"events.jsonl.zst",
 	}
 
 	for _, f := range files {
@@ -249,6 +253,46 @@ func Example_detectFileType() {
 	// logs.tsv.bz2 -> TSV (bzip2) (compressed: true)
 	// events.parquet -> Parquet (compressed: false)
 	// access.ltsv.zst -> LTSV (zstd) (compressed: true)
+	// config.json -> JSON (compressed: false)
+	// config.json.gz -> JSON (gzip) (compressed: true)
+	// events.jsonl -> JSONL (compressed: false)
+	// events.jsonl.zst -> JSONL (zstd) (compressed: true)
+}
+
+// Example_jsonProcessing demonstrates processing JSON data.
+// JSON arrays are parsed into rows, each containing the raw JSON element
+// in a single "data" column.
+func Example_jsonProcessing() {
+	type Record struct {
+		Data string `name:"data" validate:"required"`
+	}
+
+	jsonData := `[{"name":"Alice","age":30},{"name":"Bob","age":25}]`
+
+	processor := fileprep.NewProcessor(fileprep.FileTypeJSON)
+	var records []Record
+
+	reader, result, err := processor.Process(strings.NewReader(jsonData), &records)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Processed %d rows, %d valid\n", result.RowCount, result.ValidRowCount)
+	for i, r := range records {
+		fmt.Printf("Row %d: %s\n", i+1, r.Data)
+	}
+
+	output, _ := io.ReadAll(reader) //nolint:errcheck // Example code
+	fmt.Printf("JSONL output:\n%s", output)
+
+	// Output:
+	// Processed 2 rows, 2 valid
+	// Row 1: {"name":"Alice","age":30}
+	// Row 2: {"name":"Bob","age":25}
+	// JSONL output:
+	// {"name":"Alice","age":30}
+	// {"name":"Bob","age":25}
 }
 
 // Example_employeePreprocessing demonstrates the full power of fileprep:

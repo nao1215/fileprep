@@ -9,7 +9,7 @@
 
 ![fileprep-logo](../images/fileprep-logo-small.png)
 
-**fileprep** — это библиотека Go для очистки, нормализации и валидации структурированных данных (CSV, TSV, LTSV, Parquet и Excel) с использованием лёгких правил на основе struct-тегов. Поддерживает прозрачную работу с потоками gzip, bzip2, xz, zstd, zlib, snappy, s2 и lz4.
+**fileprep** — это библиотека Go для очистки, нормализации и валидации структурированных данных (CSV, TSV, LTSV, JSON, JSONL, Parquet и Excel) с использованием лёгких правил на основе struct-тегов. Поддерживает прозрачную работу с потоками gzip, bzip2, xz, zstd, zlib, snappy, s2 и lz4.
 
 ## Почему fileprep?
 
@@ -19,7 +19,7 @@
 
 ## Возможности
 
-- Поддержка множества форматов: CSV, TSV, LTSV, Parquet, Excel (.xlsx)
+- Поддержка множества форматов: CSV, TSV, LTSV, JSON (.json), JSONL (.jsonl), Parquet, Excel (.xlsx)
 - Поддержка сжатия: gzip (.gz), bzip2 (.bz2), xz (.xz), zstd (.zst), zlib (.z), snappy (.snappy), s2 (.s2), lz4 (.lz4)
 - Привязка колонок по имени: поля автоматически соответствуют именам колонок в `snake_case`, настраивается через тег `name`
 - Предобработка на основе struct-тегов (`prep`): trim, lowercase, uppercase, значения по умолчанию
@@ -517,6 +517,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 | CSV | `.csv` | `.csv.gz`, `.csv.bz2`, `.csv.xz`, `.csv.zst`, `.csv.z`, `.csv.snappy`, `.csv.s2`, `.csv.lz4` |
 | TSV | `.tsv` | `.tsv.gz`, `.tsv.bz2`, `.tsv.xz`, `.tsv.zst`, `.tsv.z`, `.tsv.snappy`, `.tsv.s2`, `.tsv.lz4` |
 | LTSV | `.ltsv` | `.ltsv.gz`, `.ltsv.bz2`, `.ltsv.xz`, `.ltsv.zst`, `.ltsv.z`, `.ltsv.snappy`, `.ltsv.s2`, `.ltsv.lz4` |
+| JSON | `.json` | `.json.gz`, `.json.bz2`, `.json.xz`, `.json.zst`, `.json.z`, `.json.snappy`, `.json.s2`, `.json.lz4` |
+| JSONL | `.jsonl` | `.jsonl.gz`, `.jsonl.bz2`, `.jsonl.xz`, `.jsonl.zst`, `.jsonl.z`, `.jsonl.snappy`, `.jsonl.s2`, `.jsonl.lz4` |
 | Excel | `.xlsx` | `.xlsx.gz`, `.xlsx.bz2`, `.xlsx.xz`, `.xlsx.zst`, `.xlsx.z`, `.xlsx.snappy`, `.xlsx.s2`, `.xlsx.lz4` |
 | Parquet | `.parquet` | `.parquet.gz`, `.parquet.bz2`, `.parquet.xz`, `.parquet.zst`, `.parquet.z`, `.parquet.snappy`, `.parquet.s2`, `.parquet.lz4` |
 
@@ -536,6 +538,8 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 **Примечание о сжатии Parquet**: Внешнее сжатие (`.parquet.gz` и т.д.) применяется к самому файлу-контейнеру. Файлы Parquet также могут использовать внутреннее сжатие (Snappy, GZIP, LZ4, ZSTD), которое прозрачно обрабатывается библиотекой parquet-go.
 
 **Примечание о файлах Excel**: Обрабатывается только **первый лист**. Последующие листы в многолистовых книгах будут проигнорированы.
+
+**Примечание о файлах JSON/JSONL**: Данные JSON/JSONL хранятся в единственном столбце `"data"`, содержащем необработанные JSON-строки. Каждый элемент JSON-массива или строка JSONL становится одной строкой. JSON-вход выводится как компактный JSONL (одно JSON-значение на строку). Теги предобработки работают с необработанной JSON-строкой, а не с отдельными полями внутри неё. Если предобработка разрушает структуру JSON, `Process` возвращает `ErrInvalidJSONAfterPrep`. Если после предобработки все строки становятся пустыми, `Process` возвращает `ErrEmptyJSONOutput`.
 
 ## Интеграция с filesql
 

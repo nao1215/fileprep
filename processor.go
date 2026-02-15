@@ -3,6 +3,7 @@ package fileprep
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"reflect"
@@ -37,6 +38,8 @@ func NewProcessor(fileType fileparser.FileType) *Processor {
 //   - CSV input → CSV output
 //   - TSV input → TSV output (tab-delimited)
 //   - LTSV input → LTSV output (label:value format)
+//   - JSON input → JSONL output (one JSON value per line)
+//   - JSONL input → JSONL output (one JSON value per line)
 //   - XLSX input → CSV output (tabular data)
 //   - Parquet input → CSV output (tabular data)
 //
@@ -127,6 +130,12 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 	}
 
 	headerLen := len(headers)
+	baseType := fileparser.BaseFileType(p.fileType)
+	isJSONFormat := baseType == fileparser.JSON || baseType == fileparser.JSONL
+
+	// jsonDataColumn is the column name used by fileparser for JSON/JSONL data.
+	// Each JSON element is stored as a raw JSON string in this single column.
+	const jsonDataColumn = "data"
 
 	// Process records in-place to avoid unnecessary allocations
 	for rowIdx := range records {
@@ -161,6 +170,29 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 			processedValue := fieldInfo.Preprocessors.Process(value)
 			if colIdx >= 0 && colIdx < len(record) {
 				record[colIdx] = processedValue
+			}
+
+			// For JSON/JSONL formats, verify the "data" column integrity after preprocessing.
+			// Only the "data" column contains JSON values; other struct fields may map to
+			// non-existent columns and receive default/preprocessed non-JSON values, so
+			// checking all fields would cause false positives.
+			if isJSONFormat && colName == jsonDataColumn {
+				if processedValue != "" && !json.Valid([]byte(processedValue)) {
+					// Prep tags (e.g. truncate, replace) destroyed the JSON structure.
+					// This is a hard error: invalid JSON lines in JSONL output cause
+					// downstream parsers to fail entirely.
+					return nil, nil, fmt.Errorf("row %d, column %q: %w: %s",
+						rowNum, colName, ErrInvalidJSONAfterPrep, truncateForError(processedValue, 100))
+				} else if value != "" && processedValue == "" {
+					// Preprocessing emptied the JSON data (e.g. nullify).
+					// The row will be skipped in JSONL output, so record a PrepError
+					// to keep ValidRowCount consistent with actual output line count.
+					result.Errors = append(result.Errors, newPrepError(
+						rowNum, colName, fieldInfo.Name, "empty_json_data",
+						"JSON data is empty after preprocessing (original: "+truncateForError(value, 100)+")",
+					))
+					rowHasError = true
+				}
 			}
 
 			// Apply validation
@@ -245,16 +277,25 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 		return nil, nil, fmt.Errorf("failed to write output: %w", err)
 	}
 
+	// For JSON/JSONL, an empty output means all rows were empty after preprocessing.
+	// This is a hard error because an empty JSONL stream is unparseable by downstream consumers.
+	if isJSONFormat && outputBuf.Len() == 0 {
+		return nil, nil, ErrEmptyJSONOutput
+	}
+
 	return newStream(outputBuf.Bytes(), p.outputFormat(), p.fileType), result, nil
 }
 
 // outputFormat returns the actual output format for the stream.
 // CSV, TSV, and LTSV preserve their format.
+// JSON and JSONL are output as JSONL (one JSON value per line).
 // XLSX and Parquet are converted to CSV.
 func (p *Processor) outputFormat() fileparser.FileType {
 	switch fileparser.BaseFileType(p.fileType) {
 	case fileparser.CSV, fileparser.TSV, fileparser.LTSV:
 		return fileparser.BaseFileType(p.fileType)
+	case fileparser.JSON, fileparser.JSONL:
+		return fileparser.JSONL
 	default:
 		// XLSX, Parquet output as CSV
 		return fileparser.CSV
@@ -280,6 +321,8 @@ func (p *Processor) estimateOutputSize(headers []string, records [][]string) int
 //   - CSV → CSV (comma-delimited)
 //   - TSV → TSV (tab-delimited)
 //   - LTSV → LTSV (label:value pairs, tab-separated)
+//   - JSON → JSONL (one JSON value per line)
+//   - JSONL → JSONL (one JSON value per line)
 //   - XLSX → CSV (tabular data as comma-delimited)
 //   - Parquet → CSV (tabular data as comma-delimited)
 func (p *Processor) writeOutput(w io.Writer, headers []string, records [][]string) error {
@@ -288,6 +331,8 @@ func (p *Processor) writeOutput(w io.Writer, headers []string, records [][]strin
 		return p.writeTSV(w, headers, records)
 	case fileparser.LTSV:
 		return p.writeLTSV(w, headers, records)
+	case fileparser.JSON, fileparser.JSONL:
+		return p.writeJSONL(w, records)
 	default:
 		// CSV, XLSX, Parquet all output as CSV (tabular format)
 		return p.writeCSV(w, headers, records)
@@ -357,6 +402,45 @@ func (p *Processor) writeLTSV(w io.Writer, headers []string, records [][]string)
 		}
 	}
 	return nil
+}
+
+// writeJSONL writes data in JSONL format (one JSON value per line).
+// For JSON/JSONL input, each record has a single "data" column containing
+// a raw JSON string. The output writes each JSON value on its own line,
+// producing valid JSONL that can be consumed by filesql.
+// Empty strings are skipped to avoid writing blank lines.
+//
+// Each value is compacted via json.Compact to ensure it occupies exactly one line.
+// Pretty-printed JSON from fileparser may contain newlines within a single element,
+// which would break JSONL format without compaction.
+func (p *Processor) writeJSONL(w io.Writer, records [][]string) error {
+	var compactBuf bytes.Buffer
+	for _, record := range records {
+		if len(record) == 0 || record[0] == "" {
+			continue
+		}
+		compactBuf.Reset()
+		if err := json.Compact(&compactBuf, []byte(record[0])); err != nil {
+			// Should not happen: invalid JSON is caught by ErrInvalidJSONAfterPrep
+			// before reaching writeJSONL. Return error rather than writing broken JSONL.
+			return fmt.Errorf("failed to compact JSON at output: %w", err)
+		}
+		if _, err := compactBuf.WriteTo(w); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// truncateForError truncates a string for inclusion in error messages.
+func truncateForError(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // setFieldValue sets a struct field value from a string
