@@ -124,7 +124,7 @@ type Record struct {
 
 **Excel → première feuille uniquement.** Les feuilles supplémentaires d'un `.xlsx` sont ignorées.
 
-**Fichiers volumineux → utilisez `ProcessToWriter`.** `Process` garde toute la sortie en mémoire. `ProcessToWriter` l'écrit directement dans n'importe quel `io.Writer` :
+**Réduire la mémoire de sortie → utilisez `ProcessToWriter`.** `Process` garde toute la sortie en mémoire. `ProcessToWriter` évite ce buffer et écrit directement dans n'importe quel `io.Writer`. Les enregistrements d'entrée restent chargés en mémoire pour le prétraitement ; seule la copie de sortie est éliminée :
 
 ```go
 f, _ := os.Create("output.csv")

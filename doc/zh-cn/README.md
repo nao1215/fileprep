@@ -124,7 +124,7 @@ type Record struct {
 
 **Excel → 仅第一个工作表。** `.xlsx` 中的其他工作表会被忽略。
 
-**大文件 → 使用 `ProcessToWriter`。** `Process` 将整个输出缓冲在内存中。`ProcessToWriter` 直接流式写入任意 `io.Writer`：
+**节省输出内存 → 使用 `ProcessToWriter`。** `Process` 将整个输出缓冲在内存中。`ProcessToWriter` 跳过该缓冲区，直接写入任意 `io.Writer`。输入记录仍会加载到内存中进行预处理，只是省去了输出的副本：
 
 ```go
 f, _ := os.Create("output.csv")

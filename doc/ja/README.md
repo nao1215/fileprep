@@ -124,7 +124,7 @@ type Record struct {
 
 **Excel → 先頭シートのみ。** `.xlsx` の2枚目以降のシートは無視されます。
 
-**大きなファイル → `ProcessToWriter` を使う。** `Process` は出力全体をメモリにバッファします。`ProcessToWriter` は任意の `io.Writer` にストリーム出力します：
+**出力メモリの削減 → `ProcessToWriter` を使う。** `Process` は出力全体をメモリにバッファします。`ProcessToWriter` はそのバッファを省略し、任意の `io.Writer` に直接書き込みます。入力レコードは前処理のためメモリに読み込まれます。省略されるのは出力のコピーだけです：
 
 ```go
 f, _ := os.Create("output.csv")

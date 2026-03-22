@@ -124,7 +124,7 @@ type Record struct {
 
 **Excel → 첫 번째 시트만.** `.xlsx`의 추가 시트는 무시됩니다.
 
-**큰 파일 → `ProcessToWriter` 사용.** `Process`는 출력 전체를 메모리에 버퍼링합니다. `ProcessToWriter`는 `io.Writer`에 직접 스트리밍합니다:
+**출력 메모리 절약 → `ProcessToWriter` 사용.** `Process`는 출력 전체를 메모리에 버퍼링합니다. `ProcessToWriter`는 해당 버퍼를 생략하고 `io.Writer`에 직접 씁니다. 입력 레코드는 전처리를 위해 메모리에 로드됩니다. 제거되는 것은 출력 복사본뿐입니다:
 
 ```go
 f, _ := os.Create("output.csv")

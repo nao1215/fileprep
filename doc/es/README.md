@@ -107,7 +107,7 @@ type JSONRecord struct {
 }
 ```
 
-La salida siempre es JSONL compacto. Si un tag prep rompe la estructura JSON se devuelve `ErrInvalidJSONAfterPrep`; si todas las filas quedan vacías, `ErrEmptyJSONOutput`.
+La salida siempre es JSONL compacto. Si un tag prep rompe la estructura JSON, se devuelve `ErrInvalidJSONAfterPrep`; si todas las filas quedan vacías, `ErrEmptyJSONOutput`.
 
 **La coincidencia de columnas distingue mayúsculas de minúsculas.** El campo `UserName` se convierte automáticamente a `user_name`. Encabezados como `User_Name`, `USERNAME` o `userName` no coinciden. Usa el tag `name` para sobreescribir:
 
@@ -124,7 +124,7 @@ type Record struct {
 
 **Excel → solo la primera hoja.** Las hojas adicionales en `.xlsx` se ignoran.
 
-**Archivos grandes → usa `ProcessToWriter`.** `Process` almacena toda la salida en memoria. `ProcessToWriter` la escribe directamente a cualquier `io.Writer`:
+**Reducir memoria de salida → usa `ProcessToWriter`.** `Process` almacena toda la salida en memoria. `ProcessToWriter` omite ese buffer y escribe directamente a cualquier `io.Writer`. Los registros de entrada se cargan en memoria igualmente para el preprocesamiento; esto solo elimina la copia de salida:
 
 ```go
 f, _ := os.Create("output.csv")

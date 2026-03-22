@@ -124,7 +124,7 @@ type Record struct {
 
 **Excel → first sheet only.** Additional sheets in `.xlsx` are silently skipped.
 
-**Large files → use `ProcessToWriter`.** `Process` buffers the entire output in memory. `ProcessToWriter` streams it to any `io.Writer`:
+**Saving output memory → use `ProcessToWriter`.** `Process` buffers the entire output in memory. `ProcessToWriter` skips that buffer and writes directly to any `io.Writer`. Note that input records are still loaded into memory for preprocessing; this only eliminates the output copy:
 
 ```go
 f, _ := os.Create("output.csv")
