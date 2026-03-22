@@ -10,7 +10,7 @@ Thank you for considering contributing to the fileprep project! This document ex
 
 #### Installing Go
 
-fileprep development requires Go 1.24 or later.
+fileprep development requires Go 1.25 or later.
 
 **macOS (using Homebrew)**
 ```bash
@@ -23,8 +23,8 @@ brew install go
 sudo snap install go --classic
 
 # Or download from official site
-wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
 source ~/.profile
 ```
@@ -157,7 +157,7 @@ We actively encourage the use of AI coding assistants to improve productivity an
 1. **Review all generated code**: Always review and understand AI-generated code before committing
 2. **Maintain consistency**: Ensure AI-generated code follows our coding standards in CLAUDE.md
 3. **Test thoroughly**: AI-generated code must pass all tests and linting (`make test` and `make lint`)
-4. **Use project configuration**: We provide `CLAUDE.md`, `.cursorrules` and `.github/copilot-instructions.md` to help AI assistants understand our project standards
+4. **Use project configuration**: We provide `CLAUDE.md` to help AI assistants understand our project standards
 
 ## Creating Pull Requests
 

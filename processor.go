@@ -117,21 +117,107 @@ func NewProcessor(fileType fileparser.FileType, opts ...Option) *Processor {
 //	}
 //	fmt.Printf("Processed %d rows, %d valid\n", result.RowCount, result.ValidRowCount)
 func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader, *ProcessResult, error) {
-	// Get struct type and parse tags
-	structType, err := getStructType(structSlicePointer)
+	headers, records, result, err := p.processRecords(input, structSlicePointer)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	structInfo, err := parseStructType(structType, p.strictTagParsing)
+	baseType := fileparser.BaseFileType(p.fileType)
+	isJSONFormat := baseType == fileparser.JSON || baseType == fileparser.JSONL
+
+	// Select output records
+	outputRecords := records
+	if p.validRowsOnly {
+		outputRecords = result.validRecords
+	}
+
+	reader, err := p.buildOutput(headers, outputRecords, isJSONFormat)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	result.validRecords = nil // release; no longer needed
+	return reader, result, nil
+}
+
+// ProcessToWriter works like Process but writes the preprocessed output
+// directly to w instead of buffering it in memory. This is useful for
+// large datasets where holding the full output buffer is undesirable.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	result, err := processor.ProcessToWriter(input, &records, &buf)
+func (p *Processor) ProcessToWriter(input io.Reader, structSlicePointer any, w io.Writer) (*ProcessResult, error) {
+	headers, records, result, err := p.processRecords(input, structSlicePointer)
+	if err != nil {
+		return nil, err
+	}
+
+	baseType := fileparser.BaseFileType(p.fileType)
+	isJSONFormat := baseType == fileparser.JSON || baseType == fileparser.JSONL
+
+	outputRecords := records
+	if p.validRowsOnly {
+		outputRecords = result.validRecords
+	}
+
+	// Wrap w with a countingWriter so we can detect whether writeJSONL
+	// actually emitted any bytes (it skips empty records).
+	cw := &countingWriter{w: w}
+	if err := p.writeOutput(cw, headers, outputRecords); err != nil {
+		return nil, fmt.Errorf("failed to write output: %w", err)
+	}
+
+	if isJSONFormat && cw.n == 0 {
+		return nil, ErrEmptyJSONOutput
+	}
+
+	result.validRecords = nil
+	return result, nil
+}
+
+// countingWriter wraps an io.Writer and counts total bytes written.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+// Write implements io.Writer.
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	cw.n += int64(n)
+	return n, err
+}
+
+// processRecords is the shared core of Process and ProcessToWriter.
+// It parses the input, applies preprocessing and validation, populates
+// the struct slice, and returns the processed headers, records, structInfo
+// and result. The caller is responsible for writing the output.
+func (p *Processor) processRecords(input io.Reader, structSlicePointer any) (
+	[]string, [][]string, *ProcessResult, error,
+) {
+	// Get struct type and parse tags
+	structType, err := getStructType(structSlicePointer)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	cachedInfo, err := cachedParseStructType(structType, p.strictTagParsing)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// Copy fields so we can safely mutate ColumnIndex without racing
+	// against concurrent callers that share the cached structInfo.
+	fields := make([]fieldInfo, len(cachedInfo.Fields))
+	copy(fields, cachedInfo.Fields)
+	sInfo := &structInfo{Fields: fields}
 
 	// Parse the file using fileparser
 	tableData, err := fileparser.Parse(input, p.fileType)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, wrapParseError(err)
 	}
 
 	headers := tableData.Headers
@@ -146,8 +232,8 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 	}
 
 	// Resolve column indices for each field based on column name
-	for i := range structInfo.Fields {
-		fi := &structInfo.Fields[i]
+	for i := range sInfo.Fields {
+		fi := &sInfo.Fields[i]
 		if colIdx, ok := headerToColIdx[fi.ColumnName]; ok {
 			fi.ColumnIndex = colIdx
 		}
@@ -164,16 +250,14 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 	}
 	structSliceValue := reflect.ValueOf(structSlicePointer).Elem()
 
+	// Always reset slice length so that reusing the same slice does not
+	// carry over stale elements from a previous Process call.
+	structSliceValue.SetLen(0)
+
 	// Pre-allocate the struct slice to avoid repeated growth
 	if structSliceValue.Cap() < len(records) {
 		newSlice := reflect.MakeSlice(structSliceValue.Type(), 0, len(records))
 		structSliceValue.Set(newSlice)
-	}
-
-	// Build field name to column index map for cross-field validation
-	fieldNameToColIdx := make(map[string]int)
-	for _, fi := range structInfo.Fields {
-		fieldNameToColIdx[fi.Name] = fi.ColumnIndex
 	}
 
 	headerLen := len(headers)
@@ -185,9 +269,8 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 	const jsonDataColumn = "data"
 
 	// When validRowsOnly is enabled, collect only valid records for output
-	var validRecords [][]string
 	if p.validRowsOnly {
-		validRecords = make([][]string, 0, len(records))
+		result.validRecords = make([][]string, 0, len(records))
 	}
 
 	// Process records in-place to avoid unnecessary allocations
@@ -206,21 +289,24 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 
 		structValue := reflect.New(structType).Elem()
 
-		// First pass: preprocessing and single-field validation
-		rowHasError, err := p.processRow(record, rowNum, structInfo, structValue, result, isJSONFormat, jsonDataColumn)
+		// First pass: preprocessing and single-field validation.
+		// processRow returns fieldValues mapping each field name to its
+		// preprocessed string value (used for cross-field validation).
+		fieldValues := make(map[string]string, len(sInfo.Fields))
+		rowHasError, err := p.processRow(record, rowNum, sInfo, structValue, result, isJSONFormat, jsonDataColumn, fieldValues)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
-		// Second pass: cross-field validation
-		if p.applyCrossFieldValidation(record, rowNum, structInfo, fieldNameToColIdx, result) {
+		// Second pass: cross-field validation using processed field values
+		if p.applyCrossFieldValidation(rowNum, sInfo, fieldValues, result) {
 			rowHasError = true
 		}
 
 		if !rowHasError {
 			result.ValidRowCount++
 			if p.validRowsOnly {
-				validRecords = append(validRecords, record)
+				result.validRecords = append(result.validRecords, record)
 			}
 			structSliceValue.Set(reflect.Append(structSliceValue, structValue))
 		} else if !p.validRowsOnly {
@@ -228,16 +314,13 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 		}
 	}
 
-	// Build output from the processed records
-	reader, err := p.buildOutput(headers, records, validRecords, isJSONFormat)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return reader, result, nil
+	return headers, records, result, nil
 }
 
 // processRow applies preprocessing and single-field validation to one row.
+// It populates fieldValues with each field's preprocessed string value so
+// that cross-field validators always see the correct value regardless of
+// the field's Go type.
 // It returns true if the row has any errors, and a non-nil error for fatal
 // conditions (e.g., JSON corruption after preprocessing).
 func (p *Processor) processRow(
@@ -248,6 +331,7 @@ func (p *Processor) processRow(
 	result *ProcessResult,
 	isJSONFormat bool,
 	jsonDataColumn string,
+	fieldValues map[string]string,
 ) (bool, error) {
 	rowHasError := false
 
@@ -267,6 +351,11 @@ func (p *Processor) processRow(
 		if colIdx >= 0 && colIdx < len(record) {
 			record[colIdx] = processedValue
 		}
+
+		// Store the preprocessed string value for cross-field validation.
+		// This avoids using reflect.Value.String() which returns diagnostic
+		// strings (e.g. "<int Value>") for non-string types.
+		fieldValues[fieldInfo.Name] = processedValue
 
 		// For JSON/JSONL formats, verify the "data" column integrity after preprocessing.
 		// Only the "data" column contains JSON values; other struct fields may map to
@@ -313,12 +402,14 @@ func (p *Processor) processRow(
 }
 
 // applyCrossFieldValidation runs cross-field validators for one row.
+// fieldValues maps struct field names to their preprocessed values, so
+// cross-field validators always see the final values regardless of whether
+// the column existed in the original input.
 // It returns true if any cross-field validation error was found.
 func (p *Processor) applyCrossFieldValidation(
-	record []string,
 	rowNum int,
 	structInfo *structInfo,
-	fieldNameToColIdx map[string]int,
+	fieldValues map[string]string,
 	result *ProcessResult,
 ) bool {
 	hasError := false
@@ -328,17 +419,13 @@ func (p *Processor) applyCrossFieldValidation(
 			continue
 		}
 
-		colIdx := fieldInfo.ColumnIndex
-		srcValue := ""
-		if colIdx >= 0 && colIdx < len(record) {
-			srcValue = record[colIdx]
-		}
+		srcValue := fieldValues[fieldInfo.Name]
 		colName := fieldInfo.ColumnName
 
 		for _, crossValidator := range fieldInfo.CrossFieldValidators {
 			targetFieldName := crossValidator.TargetField()
-			targetColIdx, ok := fieldNameToColIdx[targetFieldName]
-			if !ok || targetColIdx < 0 {
+			targetValue, ok := fieldValues[targetFieldName]
+			if !ok {
 				result.Errors = append(result.Errors, newValidationError(
 					rowNum, colName, fieldInfo.Name, srcValue,
 					crossValidator.Name(),
@@ -348,17 +435,6 @@ func (p *Processor) applyCrossFieldValidation(
 				continue
 			}
 
-			if targetColIdx >= len(record) {
-				result.Errors = append(result.Errors, newValidationError(
-					rowNum, colName, fieldInfo.Name, srcValue,
-					crossValidator.Name(),
-					fmt.Sprintf("target field %s index out of range", targetFieldName),
-				))
-				hasError = true
-				continue
-			}
-
-			targetValue := record[targetColIdx]
 			if msg := crossValidator.Validate(srcValue, targetValue); msg != "" {
 				result.Errors = append(result.Errors, newValidationError(
 					rowNum, colName, fieldInfo.Name, srcValue,
@@ -372,15 +448,8 @@ func (p *Processor) applyCrossFieldValidation(
 	return hasError
 }
 
-// buildOutput generates the output io.Reader from processed records.
-// When validRowsOnly is enabled, validRecords is used instead of all records.
-func (p *Processor) buildOutput(headers []string, records [][]string, validRecords [][]string, isJSONFormat bool) (io.Reader, error) {
-	// Select which records to include in output
-	outputRecords := records
-	if p.validRowsOnly {
-		outputRecords = validRecords
-	}
-
+// buildOutput generates the output io.Reader from the given records.
+func (p *Processor) buildOutput(headers []string, outputRecords [][]string, isJSONFormat bool) (io.Reader, error) {
 	// Pre-allocate buffer capacity based on estimated output size to reduce allocations
 	var outputBuf bytes.Buffer
 	estimatedSize := p.estimateOutputSize(headers, outputRecords)

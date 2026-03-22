@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // fieldInfo contains parsed information about a struct field
@@ -21,6 +22,33 @@ type fieldInfo struct {
 // structInfo contains parsed information about a struct type
 type structInfo struct {
 	Fields []fieldInfo
+}
+
+// structInfoCacheKey combines the reflect.Type and strict flag for cache lookups.
+type structInfoCacheKey struct {
+	typ    reflect.Type
+	strict bool
+}
+
+// structInfoCache caches parsed structInfo by (reflect.Type, strict) so that
+// repeated Process calls on the same Processor avoid redundant tag parsing.
+//
+//nolint:gochecknoglobals // process-wide cache; safe for concurrent use via sync.Map
+var structInfoCache sync.Map
+
+// cachedParseStructType returns a cached *structInfo for the given type and
+// strict flag, parsing and caching it on first access.
+func cachedParseStructType(structType reflect.Type, strict bool) (*structInfo, error) {
+	key := structInfoCacheKey{typ: structType, strict: strict}
+	if v, ok := structInfoCache.Load(key); ok {
+		return v.(*structInfo), nil //nolint:forcetypeassert,errcheck // type is guaranteed by Store below
+	}
+	info, err := parseStructType(structType, strict)
+	if err != nil {
+		return nil, err
+	}
+	structInfoCache.Store(key, info)
+	return info, nil
 }
 
 // parseStructType parses struct tags from a struct type and returns field information
