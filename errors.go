@@ -26,6 +26,10 @@ var (
 	// after preprocessing, resulting in no output lines. An empty JSONL output is
 	// unparseable by downstream consumers.
 	ErrEmptyJSONOutput = errors.New("JSON/JSONL output has no valid rows after preprocessing")
+	// ErrNilWriter is returned when a nil io.Writer is passed to ProcessToWriter.
+	ErrNilWriter = errors.New("writer must not be nil")
+	// ErrNilReader is returned when a nil io.Reader is passed to Process or ProcessToWriter.
+	ErrNilReader = errors.New("reader must not be nil")
 )
 
 // ValidationError represents a validation error with row and column information.
@@ -174,7 +178,6 @@ var emptyFileMessages = map[string]struct{}{ //nolint:gochecknoglobals // consta
 	"no valid ltsv records found":  {},
 	"no sheets found in xlsx file": {},
 	"no headers found in xlsx":     {},
-	"reader cannot be nil":         {},
 }
 
 // wrapParseError wraps errors returned by fileparser.Parse with the
@@ -189,6 +192,9 @@ func wrapParseError(err error) error {
 
 	if msg == "unsupported file type" {
 		return fmt.Errorf("%w: %w", ErrUnsupportedFileType, err)
+	}
+	if msg == "reader cannot be nil" {
+		return fmt.Errorf("%w: %w", ErrNilReader, err)
 	}
 	if _, ok := emptyFileMessages[msg]; ok {
 		return fmt.Errorf("%w: %w", ErrEmptyFile, err)

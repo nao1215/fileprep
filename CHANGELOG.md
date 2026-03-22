@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-22
+
+### Added
+- **`ProcessToWriter` API** ([457d341](https://github.com/nao1215/fileprep/commit/457d341)): New method that writes preprocessed output directly to an `io.Writer`, avoiding the output buffer allocation for large datasets
+- **Sentinel Errors** ([0cd1558](https://github.com/nao1215/fileprep/commit/0cd1558)):
+  - `ErrNilWriter`: Returned when a nil `io.Writer` is passed to `ProcessToWriter`
+  - `ErrNilReader`: Returned when a nil `io.Reader` is passed to `Process` or `ProcessToWriter`, distinguished from `ErrEmptyFile`
+- **Struct Tag Parse Cache** ([457d341](https://github.com/nao1215/fileprep/commit/457d341)): `sync.Map`-based cache keyed by `(reflect.Type, strict)` eliminates redundant tag parsing on repeated `Process` calls
+
+### Fixed
+- **Slice Reset on Reuse** ([457d341](https://github.com/nao1215/fileprep/commit/457d341)): `Process` now calls `SetLen(0)` before appending, so reusing the same destination slice no longer carries over stale elements
+- **Sentinel Error Wrapping** ([457d341](https://github.com/nao1215/fileprep/commit/457d341), [3026a38](https://github.com/nao1215/fileprep/commit/3026a38)): Errors from `fileparser.Parse` are now wrapped with `ErrEmptyFile` / `ErrUnsupportedFileType` so `errors.Is` works correctly
+- **Cross-Field Validation** ([457d341](https://github.com/nao1215/fileprep/commit/457d341)): Cross-field validators now use a preprocessed field-value map instead of column indices, fixing `target field ... not found` when the column is absent but filled by `prep:"default=..."`
+- **`wrapParseError` Precision** ([3026a38](https://github.com/nao1215/fileprep/commit/3026a38), [0cd1558](https://github.com/nao1215/fileprep/commit/0cd1558)): Replaced broad substring matching with exact message matching against fileparser v0.5.1 error strings; separated `"reader cannot be nil"` from `ErrEmptyFile` into its own `ErrNilReader`
+
+### Changed
+- **CI Hardening** ([457d341](https://github.com/nao1215/fileprep/commit/457d341), [3026a38](https://github.com/nao1215/fileprep/commit/3026a38)): Added `-race` flag and `govulncheck` (pinned v1.1.4) to CI workflow
+- **Go Version** ([785493a](https://github.com/nao1215/fileprep/commit/785493a), [3026a38](https://github.com/nao1215/fileprep/commit/3026a38)): Bumped minimum Go version to 1.25; updated `golang.org/x/net` to v0.51.0 to resolve GO-2026-4559
+- **Documentation** ([c685c44](https://github.com/nao1215/fileprep/commit/c685c44)):
+  - Rewrote "Before Using fileprep" as concise "Gotchas" section across all 7 README languages
+  - Added `ProcessToWriter` to README, `doc.go`, and `example_test.go`
+  - Fixed CONTRIBUTING.md reference to non-existent `.cursorrules` / `.github/copilot-instructions.md`
+  - Added version support table to SECURITY.md
+
 ## [0.5.0] - 2026-02-15
 
 ### Added

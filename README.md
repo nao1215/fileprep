@@ -95,11 +95,11 @@ Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
 
-## Before Using fileprep
+## Gotchas
 
-### JSON/JSONL uses a single "data" column
+A few things worth knowing before you start.
 
-JSON/JSONL files are parsed into a single column named `"data"`. Each array element (JSON) or line (JSONL) becomes one row containing the raw JSON string.
+**JSON/JSONL → single `"data"` column.** fileparser flattens each JSON array element or JSONL line into one column called `"data"`. Your struct needs a field that maps to it:
 
 ```go
 type JSONRecord struct {
@@ -107,11 +107,9 @@ type JSONRecord struct {
 }
 ```
 
-Output is always compact JSONL. If a prep tag breaks the JSON structure, `Process` returns `ErrInvalidJSONAfterPrep`. If all rows end up empty, it returns `ErrEmptyJSONOutput`.
+Output is always compact JSONL. A prep tag that breaks JSON structure causes `ErrInvalidJSONAfterPrep`; all-empty output causes `ErrEmptyJSONOutput`.
 
-### Column matching is case-sensitive
-
-`UserName` maps to `user_name` via auto snake_case. Headers like `User_Name`, `USER_NAME`, `userName` do **not** match. Use the `name` tag when headers differ:
+**Column matching is case-sensitive.** Field `UserName` auto-converts to `user_name`. Headers spelled differently (`User_Name`, `USERNAME`, `userName`) won't match. Override with the `name` tag:
 
 ```go
 type Record struct {
@@ -120,17 +118,20 @@ type Record struct {
 }
 ```
 
-### Duplicate headers: first column wins
+**Duplicate headers → first column wins.** Given `id,id,name`, only the first `id` binds.
 
-If a file has `id,id,name`, the first `id` column is used for binding. The second is ignored.
+**Missing columns → empty string.** If a column is absent, the field gets `""`. Use `validate:"required"` to catch this.
 
-### Missing columns become empty strings
+**Excel → first sheet only.** Additional sheets in `.xlsx` are silently skipped.
 
-If a column doesn't exist for a struct field, the value is `""`. Add `validate:"required"` to catch this at parse time.
+**Saving output memory → use `ProcessToWriter`.** `Process` buffers the entire output in memory. `ProcessToWriter` skips that buffer and writes directly to any `io.Writer`. Note that input records are still loaded into memory for preprocessing; this only eliminates the output copy:
 
-### Excel: only the first sheet is processed
+```go
+f, _ := os.Create("output.csv")
+defer f.Close()
 
-Multi-sheet `.xlsx` files will silently ignore all sheets after the first.
+result, err := processor.ProcessToWriter(input, &records, f)
+```
 
 ## Advanced Examples
 
@@ -691,7 +692,7 @@ type User struct {
 
 If your LTSV keys use hyphens (`user-id`) or Parquet/XLSX columns use camelCase (`userId`), use the `name` tag to specify the exact column name.
 
-See [Before Using fileprep](#before-using-fileprep) for case-sensitivity rules, duplicate header behavior, and missing column handling.
+See [Gotchas](#gotchas) for case-sensitivity rules, duplicate header behavior, and missing column handling.
 
 ### Memory Usage
 
