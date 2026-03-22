@@ -159,32 +159,47 @@ func (r *ProcessResult) PrepErrors() []*PrepError {
 	return errs
 }
 
-// emptyErrorSubstrings are error message substrings from fileparser that
-// indicate the input file/data is empty.
-var emptyErrorSubstrings = []string{ //nolint:gochecknoglobals // constant-like lookup table
-	"empty",
-	"no valid",
-	"no headers found",
-	"no sheets found",
+// emptyFileMessages lists the exact error messages returned by
+// fileparser v0.5.1 that indicate the input file/data is empty.
+// These are matched exactly (case-insensitive) to avoid false positives.
+//
+// fileparser generates some messages dynamically via fmt.Errorf:
+//   - "empty %s data" where %s is CSV, TSV, JSON, JSONL, LTSV etc.
+//   - "empty parquet file", "empty XLSX sheet"
+//
+// We match both the static messages and the "empty ... data" pattern.
+var emptyFileMessages = map[string]struct{}{ //nolint:gochecknoglobals // constant-like lookup table
+	"empty parquet file":           {},
+	"empty xlsx sheet":             {},
+	"no valid ltsv records found":  {},
+	"no sheets found in xlsx file": {},
+	"no headers found in xlsx":     {},
+	"reader cannot be nil":         {},
 }
 
 // wrapParseError wraps errors returned by fileparser.Parse with the
 // appropriate fileprep sentinel error so that callers can use errors.Is.
-// fileparser does not export sentinel errors, so we match on the error
-// message text.
+// fileparser does not export sentinel errors, so we match on the exact
+// error message text from fileparser v0.5.1.
 func wrapParseError(err error) error {
 	if err == nil {
 		return nil
 	}
 	msg := strings.ToLower(err.Error())
 
-	if strings.Contains(msg, "unsupported file type") {
+	if msg == "unsupported file type" {
 		return fmt.Errorf("%w: %w", ErrUnsupportedFileType, err)
 	}
-	for _, sub := range emptyErrorSubstrings {
-		if strings.Contains(msg, sub) {
-			return fmt.Errorf("%w: %w", ErrEmptyFile, err)
-		}
+	if _, ok := emptyFileMessages[msg]; ok {
+		return fmt.Errorf("%w: %w", ErrEmptyFile, err)
+	}
+	// Match "empty <format> data" pattern (e.g. "empty csv data", "empty json data")
+	if strings.HasPrefix(msg, "empty ") && strings.HasSuffix(msg, " data") {
+		return fmt.Errorf("%w: %w", ErrEmptyFile, err)
+	}
+	// Match "empty <format> array" pattern (e.g. "empty json array")
+	if strings.HasPrefix(msg, "empty ") && strings.HasSuffix(msg, " array") {
+		return fmt.Errorf("%w: %w", ErrEmptyFile, err)
 	}
 	return err
 }

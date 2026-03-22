@@ -162,16 +162,32 @@ func (p *Processor) ProcessToWriter(input io.Reader, structSlicePointer any, w i
 		outputRecords = result.validRecords
 	}
 
-	if err := p.writeOutput(w, headers, outputRecords); err != nil {
+	// Wrap w with a countingWriter so we can detect whether writeJSONL
+	// actually emitted any bytes (it skips empty records).
+	cw := &countingWriter{w: w}
+	if err := p.writeOutput(cw, headers, outputRecords); err != nil {
 		return nil, fmt.Errorf("failed to write output: %w", err)
 	}
 
-	if isJSONFormat && len(outputRecords) == 0 {
+	if isJSONFormat && cw.n == 0 {
 		return nil, ErrEmptyJSONOutput
 	}
 
 	result.validRecords = nil
 	return result, nil
+}
+
+// countingWriter wraps an io.Writer and counts total bytes written.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+// Write implements io.Writer.
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	cw.n += int64(n)
+	return n, err
 }
 
 // processRecords is the shared core of Process and ProcessToWriter.
@@ -273,25 +289,13 @@ func (p *Processor) processRecords(input io.Reader, structSlicePointer any) (
 
 		structValue := reflect.New(structType).Elem()
 
-		// First pass: preprocessing and single-field validation
-		rowHasError, err := p.processRow(record, rowNum, sInfo, structValue, result, isJSONFormat, jsonDataColumn)
+		// First pass: preprocessing and single-field validation.
+		// processRow returns fieldValues mapping each field name to its
+		// preprocessed string value (used for cross-field validation).
+		fieldValues := make(map[string]string, len(sInfo.Fields))
+		rowHasError, err := p.processRow(record, rowNum, sInfo, structValue, result, isJSONFormat, jsonDataColumn, fieldValues)
 		if err != nil {
 			return nil, nil, nil, err
-		}
-
-		// Build field-value map from processed values for cross-field validation.
-		// This uses the preprocessed record values (or empty string for missing
-		// columns), so cross-field validators see the final values including
-		// those produced by prep:"default=..." on columns absent from the input.
-		fieldValues := make(map[string]string, len(sInfo.Fields))
-		for _, fi := range sInfo.Fields {
-			if fi.ColumnIndex >= 0 && fi.ColumnIndex < len(record) {
-				fieldValues[fi.Name] = record[fi.ColumnIndex]
-			} else {
-				// Column not in input; use the struct field value which
-				// reflects any default preprocessing applied in processRow.
-				fieldValues[fi.Name] = structValue.Field(fi.Index).String()
-			}
 		}
 
 		// Second pass: cross-field validation using processed field values
@@ -314,6 +318,9 @@ func (p *Processor) processRecords(input io.Reader, structSlicePointer any) (
 }
 
 // processRow applies preprocessing and single-field validation to one row.
+// It populates fieldValues with each field's preprocessed string value so
+// that cross-field validators always see the correct value regardless of
+// the field's Go type.
 // It returns true if the row has any errors, and a non-nil error for fatal
 // conditions (e.g., JSON corruption after preprocessing).
 func (p *Processor) processRow(
@@ -324,6 +331,7 @@ func (p *Processor) processRow(
 	result *ProcessResult,
 	isJSONFormat bool,
 	jsonDataColumn string,
+	fieldValues map[string]string,
 ) (bool, error) {
 	rowHasError := false
 
@@ -343,6 +351,11 @@ func (p *Processor) processRow(
 		if colIdx >= 0 && colIdx < len(record) {
 			record[colIdx] = processedValue
 		}
+
+		// Store the preprocessed string value for cross-field validation.
+		// This avoids using reflect.Value.String() which returns diagnostic
+		// strings (e.g. "<int Value>") for non-string types.
+		fieldValues[fieldInfo.Name] = processedValue
 
 		// For JSON/JSONL formats, verify the "data" column integrity after preprocessing.
 		// Only the "data" column contains JSON values; other struct fields may map to
