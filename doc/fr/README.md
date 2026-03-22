@@ -95,11 +95,11 @@ Nom : "John Doe", Email : "john@example.com"
 Nom : "Jane Smith", Email : "jane@example.com"
 ```
 
-## Avant d'utiliser fileprep
+## Points à connaître
 
-### JSON/JSONL utilise une seule colonne "data"
+Quelques points importants avant de commencer.
 
-Les fichiers JSON/JSONL sont parsés dans une seule colonne nommée `"data"`. Chaque élément du tableau (JSON) ou ligne (JSONL) devient une ligne contenant la chaîne JSON brute.
+**JSON/JSONL → une seule colonne `"data"`.** fileparser aplatit chaque élément d'un tableau JSON ou chaque ligne JSONL dans une colonne `"data"`. Votre struct doit avoir un champ correspondant :
 
 ```go
 type JSONRecord struct {
@@ -107,11 +107,9 @@ type JSONRecord struct {
 }
 ```
 
-La sortie est toujours du JSONL compact. Si une balise prep casse la structure JSON, `Process` retourne `ErrInvalidJSONAfterPrep`. Si toutes les lignes finissent vides, il retourne `ErrEmptyJSONOutput`.
+La sortie est toujours du JSONL compact. Si un tag prep casse la structure JSON, `ErrInvalidJSONAfterPrep` est renvoyé ; si toutes les lignes sont vides, `ErrEmptyJSONOutput`.
 
-### La correspondance des colonnes est sensible à la casse
-
-`UserName` est mappé à `user_name` via snake_case automatique. Les en-têtes comme `User_Name`, `USER_NAME`, `userName` ne correspondent **pas**. Utilisez la balise `name` quand les en-têtes diffèrent :
+**La correspondance des colonnes est sensible à la casse.** Le champ `UserName` est converti en `user_name`. Les en-têtes comme `User_Name`, `USERNAME` ou `userName` ne correspondent pas. Utilisez le tag `name` pour forcer la correspondance :
 
 ```go
 type Record struct {
@@ -120,17 +118,20 @@ type Record struct {
 }
 ```
 
-### En-têtes dupliqués : la première colonne l'emporte
+**En-têtes dupliqués → la première colonne gagne.** Avec `id,id,name`, seul le premier `id` est lié.
 
-Si un fichier a `id,id,name`, la première colonne `id` est utilisée pour la liaison. La seconde est ignorée.
+**Colonne absente → chaîne vide.** Si la colonne n'existe pas, la valeur est `""`. Utilisez `validate:"required"` pour le détecter.
 
-### Les colonnes manquantes deviennent des chaînes vides
+**Excel → première feuille uniquement.** Les feuilles supplémentaires d'un `.xlsx` sont ignorées.
 
-Si une colonne n'existe pas pour un champ struct, la valeur est `""`. Ajoutez `validate:"required"` pour détecter cela au moment du parsage.
+**Fichiers volumineux → utilisez `ProcessToWriter`.** `Process` garde toute la sortie en mémoire. `ProcessToWriter` l'écrit directement dans n'importe quel `io.Writer` :
 
-### Excel : seule la première feuille est traitée
+```go
+f, _ := os.Create("output.csv")
+defer f.Close()
 
-Les fichiers `.xlsx` multi-feuilles ignoreront silencieusement toutes les feuilles après la première.
+result, err := processor.ProcessToWriter(input, &records, f)
+```
 
 ## Exemples Avancés
 

@@ -95,11 +95,11 @@ Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
 
-## fileprep 사용 전 알아두기
+## 알아두면 좋은 것들
 
-### JSON/JSONL은 단일 "data" 컬럼을 사용합니다
+시작하기 전에 알아둘 사항입니다.
 
-JSON/JSONL 파일은 `"data"`라는 단일 컬럼으로 파싱됩니다. 각 배열 요소(JSON) 또는 각 줄(JSONL)이 원시 JSON 문자열을 포함하는 하나의 행이 됩니다.
+**JSON/JSONL → `"data"` 컬럼 하나.** fileparser는 JSON 배열의 각 요소나 JSONL의 각 줄을 `"data"`라는 하나의 컬럼으로 만듭니다. struct도 이에 맞춰야 합니다:
 
 ```go
 type JSONRecord struct {
@@ -107,11 +107,9 @@ type JSONRecord struct {
 }
 ```
 
-출력은 항상 컴팩트 JSONL입니다. prep 태그가 JSON 구조를 파괴하면 `Process`는 `ErrInvalidJSONAfterPrep`을 반환합니다. 모든 행이 비어 있게 되면 `ErrEmptyJSONOutput`을 반환합니다.
+출력은 항상 컴팩트 JSONL입니다. prep 태그가 JSON 구조를 깨뜨리면 `ErrInvalidJSONAfterPrep`, 모든 행이 빈 값이면 `ErrEmptyJSONOutput`을 반환합니다.
 
-### 컬럼 매칭은 대소문자를 구분합니다
-
-`UserName`은 자동 snake_case를 통해 `user_name`에 매핑됩니다. `User_Name`, `USER_NAME`, `userName`과 같은 헤더는 매칭되지 **않습니다**. 헤더가 다른 경우 `name` 태그를 사용하세요:
+**컬럼 매칭은 대소문자를 구분합니다.** 필드 `UserName`은 자동으로 `user_name`으로 변환됩니다. `User_Name`, `USERNAME`, `userName` 등은 매칭되지 않습니다. `name` 태그로 직접 지정할 수 있습니다:
 
 ```go
 type Record struct {
@@ -120,17 +118,20 @@ type Record struct {
 }
 ```
 
-### 중복 헤더: 첫 번째 컬럼이 우선합니다
+**중복 헤더 → 첫 번째 컬럼 우선.** `id,id,name`이면 첫 번째 `id`만 바인딩됩니다.
 
-파일에 `id,id,name`이 있으면 첫 번째 `id` 컬럼이 바인딩에 사용됩니다. 두 번째는 무시됩니다.
+**컬럼 없음 → 빈 문자열.** 해당하는 컬럼이 없으면 값은 `""`이 됩니다. `validate:"required"`로 감지할 수 있습니다.
 
-### 누락된 컬럼은 빈 문자열이 됩니다
+**Excel → 첫 번째 시트만.** `.xlsx`의 추가 시트는 무시됩니다.
 
-struct 필드에 대한 컬럼이 존재하지 않으면 값은 `""`입니다. 파싱 시점에 이를 감지하려면 `validate:"required"`를 추가하세요.
+**큰 파일 → `ProcessToWriter` 사용.** `Process`는 출력 전체를 메모리에 버퍼링합니다. `ProcessToWriter`는 `io.Writer`에 직접 스트리밍합니다:
 
-### Excel: 첫 번째 시트만 처리됩니다
+```go
+f, _ := os.Create("output.csv")
+defer f.Close()
 
-여러 시트가 있는 `.xlsx` 파일에서는 첫 번째 시트 이후의 모든 시트가 자동으로 무시됩니다.
+result, err := processor.ProcessToWriter(input, &records, f)
+```
 
 ## 고급 예제
 

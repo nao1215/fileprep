@@ -95,11 +95,11 @@ Nombre: "John Doe", Email: "john@example.com"
 Nombre: "Jane Smith", Email: "jane@example.com"
 ```
 
-## Antes de usar fileprep
+## Cosas a tener en cuenta
 
-### JSON/JSONL usa una única columna "data"
+Algunos puntos importantes antes de empezar.
 
-Los archivos JSON/JSONL se parsean en una única columna llamada `"data"`. Cada elemento del array (JSON) o línea (JSONL) se convierte en una fila que contiene la cadena JSON sin procesar.
+**JSON/JSONL → una sola columna `"data"`.** fileparser aplana cada elemento de un array JSON o cada línea JSONL en una columna llamada `"data"`. Tu struct debe tener un campo que le corresponda:
 
 ```go
 type JSONRecord struct {
@@ -107,11 +107,9 @@ type JSONRecord struct {
 }
 ```
 
-La salida siempre es JSONL compacto. Si un tag prep rompe la estructura JSON, `Process` devuelve `ErrInvalidJSONAfterPrep`. Si todas las filas terminan vacías, devuelve `ErrEmptyJSONOutput`.
+La salida siempre es JSONL compacto. Si un tag prep rompe la estructura JSON se devuelve `ErrInvalidJSONAfterPrep`; si todas las filas quedan vacías, `ErrEmptyJSONOutput`.
 
-### La coincidencia de columnas distingue mayúsculas y minúsculas
-
-`UserName` se mapea a `user_name` mediante snake_case automático. Encabezados como `User_Name`, `USER_NAME`, `userName` **no** coinciden. Use el tag `name` cuando los encabezados difieran:
+**La coincidencia de columnas distingue mayúsculas de minúsculas.** El campo `UserName` se convierte automáticamente a `user_name`. Encabezados como `User_Name`, `USERNAME` o `userName` no coinciden. Usa el tag `name` para sobreescribir:
 
 ```go
 type Record struct {
@@ -120,17 +118,20 @@ type Record struct {
 }
 ```
 
-### Encabezados duplicados: la primera columna gana
+**Encabezados duplicados → gana la primera columna.** Con `id,id,name`, solo se vincula el primer `id`.
 
-Si un archivo tiene `id,id,name`, la primera columna `id` se usa para el enlace. La segunda se ignora.
+**Columna ausente → cadena vacía.** Si no existe la columna para un campo, el valor es `""`. Usa `validate:"required"` para detectarlo.
 
-### Las columnas faltantes se convierten en cadenas vacías
+**Excel → solo la primera hoja.** Las hojas adicionales en `.xlsx` se ignoran.
 
-Si no existe una columna para un campo struct, el valor es `""`. Agregue `validate:"required"` para detectar esto en tiempo de parseo.
+**Archivos grandes → usa `ProcessToWriter`.** `Process` almacena toda la salida en memoria. `ProcessToWriter` la escribe directamente a cualquier `io.Writer`:
 
-### Excel: solo se procesa la primera hoja
+```go
+f, _ := os.Create("output.csv")
+defer f.Close()
 
-Los archivos `.xlsx` con múltiples hojas ignorarán silenciosamente todas las hojas después de la primera.
+result, err := processor.ProcessToWriter(input, &records, f)
+```
 
 ## Ejemplos Avanzados
 

@@ -95,11 +95,11 @@ Jane Smith,jane@example.com,25
 姓名："Jane Smith"，邮箱："jane@example.com"
 ```
 
-## 使用 fileprep 之前
+## 注意事项
 
-### JSON/JSONL 使用单个 "data" 列
+开始之前需要了解的几个要点。
 
-JSON/JSONL 文件被解析为名为 `"data"` 的单列。每个数组元素（JSON）或每一行（JSONL）成为包含原始 JSON 字符串的一行。
+**JSON/JSONL → 只有一个 `"data"` 列。** fileparser 将 JSON 数组的每个元素或 JSONL 的每一行放入名为 `"data"` 的单列中。你的 struct 需要有对应的字段：
 
 ```go
 type JSONRecord struct {
@@ -107,11 +107,9 @@ type JSONRecord struct {
 }
 ```
 
-输出始终是紧凑的 JSONL。如果 prep 标签破坏了 JSON 结构，`Process` 返回 `ErrInvalidJSONAfterPrep`。如果所有行最终都为空，则返回 `ErrEmptyJSONOutput`。
+输出始终是紧凑的 JSONL。如果 prep 标签破坏了 JSON 结构会返回 `ErrInvalidJSONAfterPrep`；如果所有行都为空则返回 `ErrEmptyJSONOutput`。
 
-### 列匹配区分大小写
-
-`UserName` 通过自动 snake_case 映射到 `user_name`。`User_Name`、`USER_NAME`、`userName` 等表头**不会**匹配。当表头不同时使用 `name` 标签：
+**列匹配区分大小写。** 字段 `UserName` 会自动转换为 `user_name`。`User_Name`、`USERNAME`、`userName` 等写法不会匹配。使用 `name` 标签来覆盖：
 
 ```go
 type Record struct {
@@ -120,17 +118,20 @@ type Record struct {
 }
 ```
 
-### 重复表头：第一列优先
+**重复表头 → 第一列优先。** 如果有 `id,id,name`，只绑定第一个 `id`。
 
-如果文件包含 `id,id,name`，第一个 `id` 列用于绑定，第二个被忽略。
+**列不存在 → 空字符串。** 如果对应的列不存在，值为 `""`。用 `validate:"required"` 可以检测到。
 
-### 缺失列变为空字符串
+**Excel → 仅第一个工作表。** `.xlsx` 中的其他工作表会被忽略。
 
-如果结构体字段对应的列不存在，值为 `""`。添加 `validate:"required"` 可在解析时捕获此情况。
+**大文件 → 使用 `ProcessToWriter`。** `Process` 将整个输出缓冲在内存中。`ProcessToWriter` 直接流式写入任意 `io.Writer`：
 
-### Excel：仅处理第一个工作表
+```go
+f, _ := os.Create("output.csv")
+defer f.Close()
 
-多工作表的 `.xlsx` 文件将静默忽略第一个之后的所有工作表。
+result, err := processor.ProcessToWriter(input, &records, f)
+```
 
 ## 高级示例
 

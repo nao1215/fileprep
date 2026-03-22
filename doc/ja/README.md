@@ -95,11 +95,11 @@ Name: "John Doe", Email: "john@example.com"
 Name: "Jane Smith", Email: "jane@example.com"
 ```
 
-## fileprep を使用する前に
+## 知っておくべきこと
 
-### JSON/JSONL は単一の "data" カラムを使用します
+使い始める前に知っておきたいポイントです。
 
-JSON/JSONL ファイルは `"data"` という名前の単一カラムにパースされます。各配列要素（JSON）または各行（JSONL）が、生のJSON文字列を含む1行になります。
+**JSON/JSONL → `"data"` カラム1つだけ。** fileparser は JSON 配列の各要素や JSONL の各行を `"data"` という1カラムにまとめます。struct 側もそれに合わせてください：
 
 ```go
 type JSONRecord struct {
@@ -107,11 +107,9 @@ type JSONRecord struct {
 }
 ```
 
-出力は常にコンパクトなJSONLです。prep タグがJSON構造を破壊した場合、`Process` は `ErrInvalidJSONAfterPrep` を返します。すべての行が空になった場合は `ErrEmptyJSONOutput` を返します。
+出力は常にコンパクトな JSONL です。prep タグが JSON 構造を壊すと `ErrInvalidJSONAfterPrep`、全行が空になると `ErrEmptyJSONOutput` を返します。
 
-### カラムマッチングは大文字小文字を区別します
-
-`UserName` は自動 snake_case 変換により `user_name` にマッピングされます。`User_Name`、`USER_NAME`、`userName` のようなヘッダーは**マッチしません**。ヘッダーが異なる場合は `name` タグを使用してください：
+**カラム名の照合は大文字小文字を区別します。** フィールド `UserName` は自動で `user_name` に変換されます。`User_Name`、`USERNAME`、`userName` などはマッチしません。`name` タグで上書きできます：
 
 ```go
 type Record struct {
@@ -120,17 +118,20 @@ type Record struct {
 }
 ```
 
-### 重複ヘッダー：最初のカラムが優先されます
+**重複ヘッダー → 最初のカラムが優先。** `id,id,name` の場合、最初の `id` だけがバインドされます。
 
-ファイルに `id,id,name` がある場合、最初の `id` カラムがバインディングに使用されます。2番目は無視されます。
+**カラムが無い → 空文字列。** struct フィールドに対応するカラムが無ければ値は `""` になります。`validate:"required"` で検出できます。
 
-### 欠落カラムは空文字列になります
+**Excel → 先頭シートのみ。** `.xlsx` の2枚目以降のシートは無視されます。
 
-structフィールドに対応するカラムが存在しない場合、値は `""` になります。パース時にこれを検出するには `validate:"required"` を追加してください。
+**大きなファイル → `ProcessToWriter` を使う。** `Process` は出力全体をメモリにバッファします。`ProcessToWriter` は任意の `io.Writer` にストリーム出力します：
 
-### Excel：最初のシートのみが処理されます
+```go
+f, _ := os.Create("output.csv")
+defer f.Close()
 
-複数シートの `.xlsx` ファイルでは、最初のシート以降のすべてのシートは暗黙的に無視されます。
+result, err := processor.ProcessToWriter(input, &records, f)
+```
 
 ## 高度な使用例
 
