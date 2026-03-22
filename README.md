@@ -132,6 +132,24 @@ If a column doesn't exist for a struct field, the value is `""`. Add `validate:"
 
 Multi-sheet `.xlsx` files will silently ignore all sheets after the first.
 
+### Streaming Output with ProcessToWriter
+
+For large datasets, `ProcessToWriter` writes preprocessed output directly to an `io.Writer` instead of buffering the entire output in memory.
+
+```go
+processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+var records []User
+
+file, _ := os.Create("output.csv")
+defer file.Close()
+
+result, err := processor.ProcessToWriter(inputReader, &records, file)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("Processed %d rows, %d valid\n", result.RowCount, result.ValidRowCount)
+```
+
 ## Advanced Examples
 
 ### Complex Data Preprocessing and Validation

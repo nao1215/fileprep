@@ -149,6 +149,10 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 //	var buf bytes.Buffer
 //	result, err := processor.ProcessToWriter(input, &records, &buf)
 func (p *Processor) ProcessToWriter(input io.Reader, structSlicePointer any, w io.Writer) (*ProcessResult, error) {
+	if w == nil {
+		return nil, ErrNilWriter
+	}
+
 	headers, records, result, err := p.processRecords(input, structSlicePointer)
 	if err != nil {
 		return nil, err

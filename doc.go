@@ -27,12 +27,20 @@
 //	// result.Errors contains validation errors with row/column information
 //	// result.RowCount and result.ValidRowCount provide processing statistics
 //
+// # Streaming Output with ProcessToWriter
+//
+// For large datasets, ProcessToWriter writes preprocessed output directly
+// to an io.Writer, avoiding the output buffer allocation:
+//
+//	var buf bytes.Buffer
+//	result, err := processor.ProcessToWriter(file, &records, &buf)
+//
 // # Memory Usage
 //
 // fileprep loads the entire file into memory for processing. This enables
 // multi-pass operations (preprocessing then validation) but means memory
-// usage scales with file size. For large files, ensure sufficient memory
-// is available.
+// usage scales with file size. For large files, use ProcessToWriter to
+// reduce peak memory by avoiding the output buffer.
 //
 // Format-specific limitations:
 //   - XLSX: Only the first sheet is processed

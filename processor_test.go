@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -1900,5 +1901,209 @@ func TestProcessToWriter(t *testing.T) {
 	}
 	if len(records1) != len(records2) {
 		t.Errorf("records length mismatch: %d vs %d", len(records1), len(records2))
+	}
+}
+
+// TestProcessToWriter_NilWriter verifies that ProcessToWriter returns
+// ErrNilWriter instead of panicking when a nil writer is passed.
+func TestProcessToWriter_NilWriter(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string
+	}
+
+	processor := NewProcessor(fileparser.CSV)
+	var records []Row
+
+	_, err := processor.ProcessToWriter(strings.NewReader("name\nAlice\n"), &records, nil)
+	if err == nil {
+		t.Fatal("expected error for nil writer")
+	}
+	if !errors.Is(err, ErrNilWriter) {
+		t.Errorf("expected errors.Is(err, ErrNilWriter), got: %v", err)
+	}
+}
+
+// TestProcessToWriter_WriterError verifies that ProcessToWriter propagates
+// write errors from the underlying writer.
+func TestProcessToWriter_WriterError(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string
+	}
+
+	processor := NewProcessor(fileparser.CSV)
+	var records []Row
+
+	_, err := processor.ProcessToWriter(strings.NewReader("name\nAlice\n"), &records, errWriter{})
+	if err == nil {
+		t.Fatal("expected error from failing writer")
+	}
+	if !strings.Contains(err.Error(), "write error") {
+		t.Errorf("expected write error in message, got: %v", err)
+	}
+}
+
+// TestProcessToWriter_WithValidRowsOnly verifies that ProcessToWriter
+// respects the WithValidRowsOnly option.
+func TestProcessToWriter_WithValidRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string `validate:"required"`
+	}
+
+	// CSV with 3 rows: Alice (valid), empty name (invalid), Bob (valid)
+	csvData := "name\nAlice\n\"\"\nBob\n"
+	processor := NewProcessor(fileparser.CSV, WithValidRowsOnly())
+
+	var records []Row
+	var buf bytes.Buffer
+	result, err := processor.ProcessToWriter(strings.NewReader(csvData), &records, &buf)
+	if err != nil {
+		t.Fatalf("ProcessToWriter: %v", err)
+	}
+
+	if result.RowCount != 3 {
+		t.Errorf("RowCount = %d, want 3", result.RowCount)
+	}
+	if result.ValidRowCount != 2 {
+		t.Errorf("ValidRowCount = %d, want 2", result.ValidRowCount)
+	}
+	if len(records) != 2 {
+		t.Errorf("records length = %d, want 2", len(records))
+	}
+	// Output should contain header + 2 valid rows only
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 3 { // header + 2 data rows
+		t.Errorf("output lines = %d, want 3 (header + 2 valid rows), got:\n%s", len(lines), buf.String())
+	}
+}
+
+// TestProcessToWriter_JSONEmptyOutput verifies that ProcessToWriter returns
+// ErrEmptyJSONOutput when all JSON rows are empty after preprocessing.
+func TestProcessToWriter_JSONEmptyOutput(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Data string `prep:"nullify=null"`
+	}
+
+	jsonlData := "null\n"
+	processor := NewProcessor(fileparser.JSONL)
+	var records []Row
+	var buf bytes.Buffer
+
+	_, err := processor.ProcessToWriter(strings.NewReader(jsonlData), &records, &buf)
+	if err == nil {
+		t.Fatal("expected ErrEmptyJSONOutput")
+	}
+	if !errors.Is(err, ErrEmptyJSONOutput) {
+		t.Errorf("expected errors.Is(err, ErrEmptyJSONOutput), got: %v", err)
+	}
+}
+
+// TestProcess_NilReader verifies that passing a nil reader returns
+// ErrNilReader instead of ErrEmptyFile.
+func TestProcess_NilReader(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string
+	}
+
+	processor := NewProcessor(fileparser.CSV)
+	var records []Row
+
+	_, _, err := processor.Process(nil, &records)
+	if err == nil {
+		t.Fatal("expected error for nil reader")
+	}
+	if !errors.Is(err, ErrNilReader) {
+		t.Errorf("expected errors.Is(err, ErrNilReader), got: %v", err)
+	}
+	if errors.Is(err, ErrEmptyFile) {
+		t.Error("nil reader should NOT match ErrEmptyFile")
+	}
+}
+
+// TestSetFieldValue_UnsupportedTypes verifies that unsupported field types
+// produce an error rather than silently succeeding.
+func TestSetFieldValue_UnsupportedTypes(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string
+		Data []byte
+	}
+
+	csvData := "name,data\nAlice,hello\n"
+	processor := NewProcessor(fileparser.CSV)
+	var records []Row
+
+	_, result, err := processor.Process(strings.NewReader(csvData), &records)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// The []byte (slice) field should trigger a type_conversion PrepError
+	if !result.HasErrors() {
+		t.Error("expected errors for unsupported field type ([]byte)")
+	}
+	found := false
+	for _, e := range result.PrepErrors() {
+		if strings.Contains(e.Message, "unsupported field type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'unsupported field type' error, got: %v", result.Errors)
+	}
+}
+
+// TestCachedParseStructType_Concurrent verifies that the sync.Map-based
+// struct tag cache is safe under concurrent access.
+func TestCachedParseStructType_Concurrent(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name  string `prep:"trim" validate:"required"`
+		Email string `prep:"lowercase" validate:"email"`
+		Age   string `validate:"numeric"`
+	}
+
+	csvData := "name,email,age\n  Alice  ,ALICE@EXAMPLE.COM,30\n"
+	processor := NewProcessor(fileparser.CSV)
+
+	const goroutines = 50
+	errs := make(chan error, goroutines)
+
+	for range goroutines {
+		go func() {
+			var records []Row
+			_, result, err := processor.Process(strings.NewReader(csvData), &records)
+			if err != nil {
+				errs <- fmt.Errorf("Process: %w", err)
+				return
+			}
+			if result.ValidRowCount != 1 {
+				errs <- fmt.Errorf("ValidRowCount = %d, want 1", result.ValidRowCount)
+				return
+			}
+			if len(records) != 1 || records[0].Name != "Alice" {
+				errs <- fmt.Errorf("records = %v, want [{Alice ...}]", records)
+				return
+			}
+			errs <- nil
+		}()
+	}
+
+	for range goroutines {
+		if err := <-errs; err != nil {
+			t.Error(err)
+		}
 	}
 }

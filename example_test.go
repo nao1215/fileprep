@@ -1,6 +1,7 @@
 package fileprep_test
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -487,4 +488,34 @@ invalid-uuid,abc,not-an-email,-100,US,USA,2024/01/15,2024-01-10,999.999.999.999,
 	// Row 3, Column 'unit_price': value must be greater than 0
 	// Row 3, Column 'ship_date': value must be greater than field OrderDate
 	// Row 4, Column 'ship_date': value must be greater than field OrderDate
+}
+
+// Example_processToWriter demonstrates ProcessToWriter, which writes
+// preprocessed output directly to an io.Writer instead of buffering
+// the entire output in memory.
+func Example_processToWriter() {
+	type Record struct {
+		Name  string `prep:"trim" validate:"required"`
+		Email string `prep:"trim,lowercase"`
+	}
+
+	csvData := "name,email\n  Alice  ,ALICE@EXAMPLE.COM\n  Bob  ,BOB@EXAMPLE.COM\n"
+	processor := fileprep.NewProcessor(fileprep.FileTypeCSV)
+	var records []Record
+
+	var buf bytes.Buffer
+	result, err := processor.ProcessToWriter(strings.NewReader(csvData), &records, &buf)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Processed %d rows, %d valid\n", result.RowCount, result.ValidRowCount)
+	fmt.Printf("Output:\n%s", buf.String())
+	// Output:
+	// Processed 2 rows, 2 valid
+	// Output:
+	// name,email
+	// Alice,alice@example.com
+	// Bob,bob@example.com
 }
