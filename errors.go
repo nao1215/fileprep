@@ -3,6 +3,7 @@ package fileprep
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/nao1215/fileparser"
 )
@@ -117,6 +118,11 @@ type ProcessResult struct {
 	Columns []string
 	// OriginalFormat is the file type that was processed
 	OriginalFormat fileparser.FileType
+
+	// validRecords holds rows that passed validation when validRowsOnly is
+	// enabled. This is an internal field used between processRecords and
+	// the output stage; it is cleared after output is written.
+	validRecords [][]string
 }
 
 // InvalidRowCount returns the number of rows that failed validation
@@ -151,4 +157,34 @@ func (r *ProcessResult) PrepErrors() []*PrepError {
 		}
 	}
 	return errs
+}
+
+// emptyErrorSubstrings are error message substrings from fileparser that
+// indicate the input file/data is empty.
+var emptyErrorSubstrings = []string{ //nolint:gochecknoglobals // constant-like lookup table
+	"empty",
+	"no valid",
+	"no headers found",
+	"no sheets found",
+}
+
+// wrapParseError wraps errors returned by fileparser.Parse with the
+// appropriate fileprep sentinel error so that callers can use errors.Is.
+// fileparser does not export sentinel errors, so we match on the error
+// message text.
+func wrapParseError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+
+	if strings.Contains(msg, "unsupported file type") {
+		return fmt.Errorf("%w: %w", ErrUnsupportedFileType, err)
+	}
+	for _, sub := range emptyErrorSubstrings {
+		if strings.Contains(msg, sub) {
+			return fmt.Errorf("%w: %w", ErrEmptyFile, err)
+		}
+	}
+	return err
 }

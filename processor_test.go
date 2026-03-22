@@ -1722,3 +1722,183 @@ func TestWriteJSONL_ErrorPath(t *testing.T) {
 		}
 	})
 }
+
+// TestProcess_SliceReset verifies that reusing the same destination slice
+// does not carry over stale elements from a previous Process call.
+func TestProcess_SliceReset(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string `validate:"required"`
+	}
+
+	processor := NewProcessor(fileparser.CSV)
+
+	// First call: populate the slice with one element
+	records := []Row{{Name: "stale"}}
+	_, _, err := processor.Process(strings.NewReader("name\nAlice\n"), &records)
+	if err != nil {
+		t.Fatalf("first Process: %v", err)
+	}
+	if len(records) != 1 || records[0].Name != "Alice" {
+		t.Fatalf("first Process: got %v, want [{Alice}]", records)
+	}
+
+	// Second call with different data; old element must not survive
+	_, _, err = processor.Process(strings.NewReader("name\nBob\n"), &records)
+	if err != nil {
+		t.Fatalf("second Process: %v", err)
+	}
+	if len(records) != 1 || records[0].Name != "Bob" {
+		t.Errorf("second Process: got %v, want [{Bob}]", records)
+	}
+}
+
+// TestProcess_SentinelErrorWrapping verifies that fileparser errors are
+// wrapped so callers can match with errors.Is.
+func TestProcess_SentinelErrorWrapping(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Col1 string
+	}
+
+	t.Run("empty file wraps ErrEmptyFile", func(t *testing.T) {
+		t.Parallel()
+		processor := NewProcessor(fileparser.CSV)
+		var records []Row
+		_, _, err := processor.Process(strings.NewReader(""), &records)
+		if err == nil {
+			t.Fatal("expected error for empty input")
+		}
+		if !errors.Is(err, ErrEmptyFile) {
+			t.Errorf("expected errors.Is(err, ErrEmptyFile), got: %v", err)
+		}
+	})
+
+	t.Run("unsupported file type wraps ErrUnsupportedFileType", func(t *testing.T) {
+		t.Parallel()
+		processor := NewProcessor(fileparser.FileType(9999))
+		var records []Row
+		_, _, err := processor.Process(strings.NewReader("data"), &records)
+		if err == nil {
+			t.Fatal("expected error for unsupported file type")
+		}
+		if !errors.Is(err, ErrUnsupportedFileType) {
+			t.Errorf("expected errors.Is(err, ErrUnsupportedFileType), got: %v", err)
+		}
+	})
+}
+
+// TestProcess_CrossFieldValidationWithDefault verifies that cross-field
+// validators work correctly when the target column is absent from the input
+// but has a default value via prep:"default=...".
+func TestProcess_CrossFieldValidationWithDefault(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Status  string `prep:"default=active"`
+		Comment string `validate:"required_if=Status active"`
+	}
+
+	csvData := "comment\nhello\n"
+	processor := NewProcessor(fileparser.CSV)
+	var records []Row
+
+	_, result, err := processor.Process(strings.NewReader(csvData), &records)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// Status is not in CSV headers but gets default="active" via prep.
+	// required_if=Status active should trigger, and comment="hello" satisfies it.
+	if result.ValidRowCount != 1 {
+		t.Errorf("ValidRowCount = %d, want 1; errors: %v", result.ValidRowCount, result.Errors)
+	}
+
+	// Now test with empty comment — should fail required_if
+	csvData2 := "comment\n\n"
+	var records2 []Row
+	_, result2, err := processor.Process(strings.NewReader(csvData2), &records2)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if result2.ValidRowCount != 0 {
+		t.Errorf("ValidRowCount = %d, want 0 (comment is empty while status=active)", result2.ValidRowCount)
+	}
+}
+
+// TestProcess_TagCaching verifies that calling Process multiple times
+// on the same Processor with the same struct type reuses cached tags.
+func TestProcess_TagCaching(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string `prep:"trim" validate:"required"`
+	}
+
+	processor := NewProcessor(fileparser.CSV)
+
+	for i := range 3 {
+		var records []Row
+		_, result, err := processor.Process(
+			strings.NewReader("name\n  Alice  \n"),
+			&records,
+		)
+		if err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		if result.ValidRowCount != 1 {
+			t.Errorf("iteration %d: ValidRowCount = %d, want 1", i, result.ValidRowCount)
+		}
+		if len(records) != 1 || records[0].Name != "Alice" {
+			t.Errorf("iteration %d: records = %v, want [{Alice}]", i, records)
+		}
+	}
+}
+
+// TestProcessToWriter verifies that ProcessToWriter writes output
+// directly to a writer and returns the same result as Process.
+func TestProcessToWriter(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name  string `prep:"trim" validate:"required"`
+		Email string `prep:"trim,lowercase"`
+	}
+
+	csvData := "name,email\n  John  ,JOHN@EXAMPLE.COM\n"
+	processor := NewProcessor(fileparser.CSV)
+
+	// Use Process for reference
+	var records1 []Row
+	reader, result1, err := processor.Process(strings.NewReader(csvData), &records1)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	refOutput, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	// Use ProcessToWriter
+	var records2 []Row
+	var buf bytes.Buffer
+	result2, err := processor.ProcessToWriter(strings.NewReader(csvData), &records2, &buf)
+	if err != nil {
+		t.Fatalf("ProcessToWriter: %v", err)
+	}
+
+	if result1.RowCount != result2.RowCount {
+		t.Errorf("RowCount mismatch: Process=%d, ProcessToWriter=%d", result1.RowCount, result2.RowCount)
+	}
+	if result1.ValidRowCount != result2.ValidRowCount {
+		t.Errorf("ValidRowCount mismatch: Process=%d, ProcessToWriter=%d", result1.ValidRowCount, result2.ValidRowCount)
+	}
+	if string(refOutput) != buf.String() {
+		t.Errorf("output mismatch:\nProcess:         %q\nProcessToWriter: %q", string(refOutput), buf.String())
+	}
+	if len(records1) != len(records2) {
+		t.Errorf("records length mismatch: %d vs %d", len(records1), len(records2))
+	}
+}

@@ -157,7 +157,7 @@ We actively encourage the use of AI coding assistants to improve productivity an
 1. **Review all generated code**: Always review and understand AI-generated code before committing
 2. **Maintain consistency**: Ensure AI-generated code follows our coding standards in CLAUDE.md
 3. **Test thoroughly**: AI-generated code must pass all tests and linting (`make test` and `make lint`)
-4. **Use project configuration**: We provide `CLAUDE.md`, `.cursorrules` and `.github/copilot-instructions.md` to help AI assistants understand our project standards
+4. **Use project configuration**: We provide `CLAUDE.md` to help AI assistants understand our project standards
 
 ## Creating Pull Requests
 
