@@ -2107,3 +2107,85 @@ func TestCachedParseStructType_Concurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestWrapParseError_AllBranches verifies that wrapParseError maps every
+// known fileparser error message to the correct sentinel error. This
+// guards against silent breakage if fileparser changes its error wording.
+func TestWrapParseError_AllBranches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		msg      string
+		sentinel error
+	}{
+		// Exact matches from emptyFileMessages
+		{"empty parquet file", ErrEmptyFile},
+		{"empty XLSX sheet", ErrEmptyFile},
+		{"no valid LTSV records found", ErrEmptyFile},
+		{"no sheets found in XLSX file", ErrEmptyFile},
+		{"no headers found in XLSX", ErrEmptyFile},
+		// Dynamic "empty <format> data" pattern
+		{"empty CSV data", ErrEmptyFile},
+		{"empty TSV data", ErrEmptyFile},
+		{"empty JSON data", ErrEmptyFile},
+		{"empty JSONL data", ErrEmptyFile},
+		{"empty LTSV data", ErrEmptyFile},
+		// Dynamic "empty <format> array" pattern
+		{"empty JSON array", ErrEmptyFile},
+		// Unsupported file type
+		{"unsupported file type", ErrUnsupportedFileType},
+		// Nil reader
+		{"reader cannot be nil", ErrNilReader},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			t.Parallel()
+			wrapped := wrapParseError(errors.New(tt.msg))
+			if !errors.Is(wrapped, tt.sentinel) {
+				t.Errorf("wrapParseError(%q) should match %v, got: %v", tt.msg, tt.sentinel, wrapped)
+			}
+		})
+	}
+
+	t.Run("unknown error passes through unchanged", func(t *testing.T) {
+		t.Parallel()
+		orig := errors.New("something unexpected")
+		got := wrapParseError(orig)
+		if !errors.Is(got, orig) {
+			t.Errorf("expected original error, got: %v", got)
+		}
+	})
+
+	t.Run("nil error returns nil", func(t *testing.T) {
+		t.Parallel()
+		if got := wrapParseError(nil); got != nil {
+			t.Errorf("expected nil, got: %v", got)
+		}
+	})
+}
+
+// TestProcessToWriter_NilReader verifies that ProcessToWriter returns
+// ErrNilReader when a nil reader is passed (same path as Process).
+func TestProcessToWriter_NilReader(t *testing.T) {
+	t.Parallel()
+
+	type Row struct {
+		Name string
+	}
+
+	processor := NewProcessor(fileparser.CSV)
+	var records []Row
+	var buf bytes.Buffer
+
+	_, err := processor.ProcessToWriter(nil, &records, &buf)
+	if err == nil {
+		t.Fatal("expected error for nil reader")
+	}
+	if !errors.Is(err, ErrNilReader) {
+		t.Errorf("expected errors.Is(err, ErrNilReader), got: %v", err)
+	}
+	if errors.Is(err, ErrEmptyFile) {
+		t.Error("nil reader via ProcessToWriter should NOT match ErrEmptyFile")
+	}
+}
