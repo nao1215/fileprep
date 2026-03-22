@@ -692,7 +692,7 @@ type User struct {
 
 Si vos clés LTSV utilisent des tirets (`user-id`) ou si les colonnes Parquet/XLSX utilisent camelCase (`userId`), utilisez la balise `name` pour spécifier le nom exact de la colonne.
 
-Consultez [Avant d'utiliser fileprep](#avant-dutiliser-fileprep) pour les règles de sensibilité à la casse, le comportement des en-têtes en double et la gestion des colonnes manquantes.
+Consultez [Points à connaître](#points-à-connaître) pour les règles de sensibilité à la casse, le comportement des en-têtes en double et la gestion des colonnes manquantes.
 
 ### Utilisation Mémoire
 

@@ -1923,6 +1923,17 @@ func TestProcessToWriter_NilWriter(t *testing.T) {
 	if !errors.Is(err, ErrNilWriter) {
 		t.Errorf("expected errors.Is(err, ErrNilWriter), got: %v", err)
 	}
+
+	// typed-nil: var w io.Writer = (*bytes.Buffer)(nil)
+	var typedNil *bytes.Buffer
+	var records2 []Row
+	_, err = processor.ProcessToWriter(strings.NewReader("name\nAlice\n"), &records2, typedNil)
+	if err == nil {
+		t.Fatal("expected error for typed-nil writer")
+	}
+	if !errors.Is(err, ErrNilWriter) {
+		t.Errorf("typed-nil: expected errors.Is(err, ErrNilWriter), got: %v", err)
+	}
 }
 
 // TestProcessToWriter_WriterError verifies that ProcessToWriter propagates

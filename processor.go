@@ -149,7 +149,7 @@ func (p *Processor) Process(input io.Reader, structSlicePointer any) (io.Reader,
 //	var buf bytes.Buffer
 //	result, err := processor.ProcessToWriter(input, &records, &buf)
 func (p *Processor) ProcessToWriter(input io.Reader, structSlicePointer any, w io.Writer) (*ProcessResult, error) {
-	if w == nil {
+	if w == nil || isNilInterface(w) {
 		return nil, ErrNilWriter
 	}
 
@@ -192,6 +192,13 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 	n, err := cw.w.Write(p)
 	cw.n += int64(n)
 	return n, err
+}
+
+// isNilInterface reports whether v is an interface holding a typed nil pointer.
+// This catches cases like: var w io.Writer = (*bytes.Buffer)(nil)
+func isNilInterface(v any) bool {
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
 // processRecords is the shared core of Process and ProcessToWriter.

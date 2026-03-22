@@ -692,7 +692,7 @@ type User struct {
 
 If your LTSV keys use hyphens (`user-id`) or Parquet/XLSX columns use camelCase (`userId`), use the `name` tag to specify the exact column name.
 
-See [Before Using fileprep](#before-using-fileprep) for case-sensitivity rules, duplicate header behavior, and missing column handling.
+See [Gotchas](#gotchas) for case-sensitivity rules, duplicate header behavior, and missing column handling.
 
 ### Memory Usage
 

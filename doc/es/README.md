@@ -692,7 +692,7 @@ type User struct {
 
 Si sus claves LTSV usan guiones (`user-id`) o las columnas Parquet/XLSX usan camelCase (`userId`), use la etiqueta `name` para especificar el nombre exacto de la columna.
 
-Consulte [Antes de usar fileprep](#antes-de-usar-fileprep) para las reglas de sensibilidad a mayúsculas/minúsculas, el comportamiento de encabezados duplicados y el manejo de columnas faltantes.
+Consulte [Cosas a tener en cuenta](#cosas-a-tener-en-cuenta) para las reglas de sensibilidad a mayúsculas/minúsculas, el comportamiento de encabezados duplicados y el manejo de columnas faltantes.
 
 ### Uso de Memoria
 
