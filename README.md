@@ -9,6 +9,10 @@
 
 ![fileprep-logo](./doc/images/fileprep-logo-small.png)
 
+>[!IMPORTANT]
+> This repository has been merged into [nao1215/filesql](https://github.com/nao1215/filesql) to simplify repository management.
+
+
 **fileprep** is a Go library for cleaning, normalizing, and validating structured data—CSV, TSV, LTSV, JSON, JSONL, Parquet, and Excel—through lightweight struct-tag rules, with seamless support for gzip, bzip2, xz, zstd, zlib, snappy, s2, and lz4 streams.
 
 ## Why fileprep?
